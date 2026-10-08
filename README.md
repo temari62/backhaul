@@ -1,0 +1,330 @@
+# Backhaul
+
+A self-hosted, two-machine personal VPN. **Laptop 1** (the *client*, e.g. on a restricted or
+foreign network) routes all its traffic through **Laptop 2** (the *exit node*, e.g. at home), so
+it appears on the internet with Laptop 2's residential IP.
+
+```
+Laptop 1 (client)                                    Laptop 2 (exit node)
+apps ─▶ WireGuard wg0 (0.0.0.0/0, ::/0)              wstunnel server :443 (TLS/WebSocket)
+          │ Endpoint = 127.0.0.1:51821                        │
+          ▼                                                   ▼
+        wstunnel client ─▶ pinned-TLS proxy ══ WSS/443 ══▶ WireGuard wg0 ─▶ NAT ─▶ internet
+                                    (looks like HTTPS)
+```
+
+- **WireGuard** (embedded userspace `wireguard-go`, or system `wg-quick`) does the encryption.
+- **wstunnel** wraps WireGuard's UDP in a TLS WebSocket on port 443, so it gets through networks
+  that block or throttle plain WireGuard.
+- The exit node's self-signed certificate is **pinned** by SHA-256 on the client. wstunnel itself
+  can't pin certificates, so backhaul's client runs wstunnel against a tiny loopback proxy that
+  makes the real TLS connection and refuses any certificate except the pinned one.
+- An unknown HTTP upgrade path is rejected by the server (`transport.path_prefix`, a random token
+  generated at setup), so port scanners just see a TLS server that says no.
+
+Backhaul only orchestrates these components. It doesn't implement any crypto or obfuscation itself.
+
+---
+
+## Install
+
+Download a release binary for your platform, or build from source (Go 1.26+):
+
+```sh
+make build            # → bin/backhaul        (or: go build -o backhaul ./cmd/backhaul)
+make cross            # → dist/ for linux/amd64, linux/arm64, darwin/arm64, windows/amd64
+```
+
+On first `serve`/`connect`, backhaul downloads **wstunnel v10.7.1** and checks its SHA-256 against
+a value pinned in the source (`internal/transport/install.go`). On Windows it also downloads
+**wintun.dll** (pinned SHA-256) and puts it next to `backhaul.exe`. To use your own copies instead,
+put `wstunnel` next to the backhaul binary, put it on `PATH`, or set `transport.wstunnel_path`.
+
+`serve` and `connect` need root/Administrator, because they create a TUN device and change routes
+and the firewall. If you run them without it, backhaul prints the exact command to re-run.
+
+---
+
+## One-time setup
+
+Do this while both machines are on an open network. Re-pairing from a restricted network is the
+most fragile step.
+
+### 1. Exit node (Laptop 2, at home)
+
+```sh
+backhaul setup
+```
+
+The wizard asks for:
+- **Public hostname**: a DDNS name such as `myhome.duckdns.org`. Your current public IP is offered
+  as the default, which is fine for testing, but home IPs change.
+- **Port**: 443 by default.
+- **Tunnel subnets**: `10.9.0.0/24` (server `.1`, client `.2`) and `fd09:b4c0::/64` for IPv6.
+- **DDNS provider** (optional): DuckDNS or Cloudflare.
+
+It then:
+- generates both WireGuard keypairs, a preshared key and a self-signed TLS certificate;
+- writes `~/.config/backhaul/config.toml` and `secrets.toml` (mode 0600);
+- prints the certificate fingerprint and a **pairing blob**, also saved to
+  `~/.config/backhaul/pairing.txt`.
+
+You can also run it non-interactively:
+
+```sh
+backhaul setup --yes --role serve --endpoint myhome.duckdns.org \
+  --ddns-provider duckdns --ddns-domain myhome.duckdns.org --ddns-token <token>
+```
+
+### 2. Client (Laptop 1)
+
+Move the blob over a trusted channel (USB stick, Signal, `scp`). **It contains the client's
+private key.** Then run:
+
+```sh
+backhaul setup --import <blob>          # or: --import @pairing.txt
+```
+
+Afterwards, delete `pairing.txt` and every copy of the blob.
+
+### 3. Router port-forward
+
+In your home router's admin page (usually under *NAT*, *Virtual servers* or *Port forwarding*):
+
+1. Give Laptop 2 a fixed LAN IP with a **DHCP reservation**. `setup` prints the LAN IP it detected.
+2. Forward **TCP 443** (or your chosen port) to that LAN IP on the same port. WireGuard's own UDP
+   port does **not** need forwarding, because it stays on the exit node's loopback.
+3. If 443 is already in use on your public IP, pick another port in `setup` (`--port 8443`).
+   443 is the hardest to block, though.
+
+### 4. Dynamic DNS
+
+Home IPs change, so the client dials a hostname.
+
+- **DuckDNS** (free): create a subdomain at duckdns.org and copy your token. Set
+  `ddns.provider = "duckdns"` and `ddns.domain = "myhome.duckdns.org"`, and put the token in
+  `secrets.toml` as `ddns_token`.
+- **Cloudflare**: create an API token with *Zone:DNS:Edit*. Set `ddns.provider = "cloudflare"`,
+  `ddns.domain` and `ddns.zone_id`. backhaul creates or updates the A record (TTL 60, not proxied).
+
+`backhaul serve` runs the updater every `ddns.interval` (5 minutes by default). On the exit node,
+`backhaul doctor` checks that the hostname resolves to the machine's current public IP.
+
+### 5. Run it
+
+```sh
+# Laptop 2
+sudo backhaul serve
+# Laptop 1
+sudo backhaul connect          # --no-killswitch to disable the kill-switch for this session
+backhaul status
+backhaul doctor
+```
+
+On Windows, run the same commands from an elevated terminal ("Run as administrator").
+
+Press Ctrl+C (or send SIGTERM) to stop. backhaul then restores routes, DNS, firewall and NAT
+exactly as it found them. If backhaul crashes or loses power, the next `serve`/`connect` replays a
+persisted undo journal first. You can also run `sudo backhaul doctor --recover` yourself.
+
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `setup` | Interactive wizard. `--import <blob>` on the client. `--yes` for non-interactive use. |
+| `serve` | Exit node: WireGuard, forwarding and NAT, a DNS forwarder on the tunnel IP, the wstunnel server, and the DDNS updater. |
+| `connect` | Client: wstunnel client, WireGuard, full-tunnel routes, DNS override, kill-switch, auto-reconnect. |
+| `status` | Up/down, handshake age, egress IP, bytes in/out, transport state (`--json`). |
+| `doctor` | Pre-flight and live diagnostics with remedies (`--recover` to undo a crashed run). |
+| `keys show` / `keys generate` | Public keys of both sides, or a fresh keypair and PSK for manual setups. |
+
+Global flags: `--config-dir` (or `$BACKHAUL_CONFIG_DIR`) and `-v/--verbose` for debug logs.
+Secrets are never logged.
+
+---
+
+## How leaks are prevented
+
+| Concern | Linux | macOS | Windows |
+|---|---|---|---|
+| Full tunnel | `0.0.0.0/1` + `128.0.0.0/1` (and `::/1` + `8000::/1`) via the tunnel. The existing default route is left in place. | same, via `route` | same, via `netsh` |
+| Routing loop | `/32` host route to the exit endpoint via the original gateway | same | same (`Find-NetRoute`) |
+| DNS | `resolvectl` (`~.` routing domain), or a rewritten `/etc/resolv.conf` (backed up) | `networksetup -setdnsservers` on every service | NRPT rule for `.` plus the adapter's DNS server |
+| Kill-switch | nftables `inet backhaul_ks` output policy drop (iptables fallback) | pf anchor `com.apple/250.backhaul` | Windows Firewall block rules on every non-tunnel adapter, except the endpoint |
+| IPv6 | **Tunnelled** (`::/0`). If that fails, IPv6 is **disabled for the session** with a warning. | same (`networksetup -setv6off`) | same (`ms_tcpip6` unbound) |
+
+The kill-switch only allows traffic on the tunnel interface, loopback, the single
+`endpoint:443` TCP connection, and DHCP/neighbour discovery so the physical link keeps working.
+It stays engaged during reconnects.
+
+**IPv6 decision:** backhaul tunnels IPv6 by default and NATs it out of the exit node (nftables/pf).
+If the exit node has no IPv6, client IPv6 traffic simply dies in the tunnel, which is safe. Set
+`client.tunnel_ipv6 = false` to disable IPv6 on the client for the session instead.
+
+---
+
+## Reachability modes
+
+- **A. Port forward + DDNS** (default): described above.
+- **B. Relay via a VPS**: use this when you can't forward a port, for example behind CGNAT. The VPS
+  runs plain `wstunnel server --restrict-http-upgrade-path-prefix <prefix> wss://0.0.0.0:443`.
+  The exit node keeps an outbound reverse tunnel open to it (`wstunnel client -R udp://…`), and
+  the client dials the VPS. Traffic still **exits via Laptop 2**. Configure it with
+  `backhaul setup --reach relay --relay-host vps.example.com --relay-fingerprint <VPS cert SHA-256>`.
+  Get the VPS fingerprint with
+  `openssl s_client -connect vps:443 </dev/null | openssl x509 -noout -fingerprint -sha256`.
+  This mode is less exercised than mode A.
+- **C. Rendezvous / hole punching**: not implemented in v1 (interface stub in `internal/reach`).
+
+---
+
+## Configuration reference
+
+`~/.config/backhaul/config.toml` (see `internal/config/config.go` for every key and default):
+
+```toml
+mode = "connect"                 # "serve" | "connect"
+
+[wireguard]
+engine = "embedded"              # "embedded" | "wg-quick"
+interface = "wg0"                # macOS always uses utunN
+subnet = "10.9.0.0/24"
+self_ip = "10.9.0.2/32"          # server: 10.9.0.1/32
+subnet6 = "fd09:b4c0::/64"
+self_ip6 = "fd09:b4c0::2/128"
+listen_port = 51820              # serve: WireGuard UDP port (loopback target of wstunnel)
+mtu = 1280
+keepalive = 25
+
+[peer]
+public_key = "BASE64..."
+allowed_ips = ["10.9.0.2/32"]    # serve only
+
+[transport]
+kind = "wstunnel"
+endpoint = "myhome.duckdns.org"  # connect
+port = 443
+tls_sha256 = "AB:CD:...:EF"
+path_prefix = "random-token"
+local_udp_port = 51821           # connect: wstunnel's local UDP listener
+remote_udp_port = 51820          # connect: the exit node's WireGuard port
+dial_timeout = "10s"
+backoff_min = "1s"
+backoff_max = "1m0s"
+
+[reachability]
+mode = "port-forward"            # "port-forward" | "relay"
+
+[ddns]
+provider = ""                    # "duckdns" | "cloudflare" | ""
+domain = ""
+interval = "5m0s"
+
+[client]
+killswitch = true
+tunnel_ipv6 = true
+dns = "10.9.0.1, fd09:b4c0::1"
+dns_method = "auto"              # linux: "auto" | "resolved" | "resolv.conf"
+
+[serve]
+dns_forwarder = true             # relay DNS on the tunnel IP to dns_upstream
+dns_upstream = "1.1.1.1:53"
+
+[health]
+interval = "10s"
+handshake_timeout = "3m0s"       # no handshake for this long → reconnect
+ip_check_url = "https://api.ipify.org"
+```
+
+`secrets.toml` (0600) holds `private_key`, `preshared_key` and `ddns_token`. backhaul refuses to
+load it if group or others can read it.
+
+---
+
+## Manual acceptance checklist
+
+1. [ ] **Fresh pair on an open network.** Run `backhaul setup` on Laptop 2, then
+   `backhaul setup --import` on Laptop 1. Delete `pairing.txt`.
+2. [ ] **Port-forward.** Router forwards TCP 443 to Laptop 2. Start `sudo backhaul serve`.
+   `backhaul doctor` on Laptop 2 shows *DDNS / endpoint points here: PASS*.
+3. [ ] **Connect from a second network** (phone hotspot, café). On Laptop 1, `backhaul doctor`
+   shows endpoint DNS, TCP reachability and TLS fingerprint all PASS. Then run
+   `sudo backhaul connect`.
+4. [ ] **Confirm IP.** A "what is my IP" site shows **Laptop 2's public IP**. `backhaul doctor`
+   shows *IP leak test: PASS*.
+5. [ ] **Confirm DNS.** `backhaul doctor` shows *DNS leak test: PASS*. A DNS leak test site shows
+   only the exit node's resolver.
+6. [ ] **Confirm IPv6.** `backhaul doctor` shows *IPv6 leak test: PASS*. An IPv6 test site shows
+   no IPv6, or the exit node's.
+7. [ ] **Kill the transport mid-session.** Kill the `wstunnel` client process, or block TCP 443
+   on Laptop 1's network. Pages stop loading and nothing leaks: `curl https://api.ipify.org` fails
+   instead of printing the real IP.
+8. [ ] **Auto-reconnect.** Restore the network. Within `health.handshake_timeout` and the
+   backoff, traffic flows again through the exit node (`backhaul status` shows reconnects ≥ 1).
+9. [ ] **Clean teardown.** Ctrl+C both sides. Routes (`ip route` / `netstat -rn` /
+   `route print`), DNS and firewall rules match the state before connecting.
+
+The Linux part of this checklist is automated in `test/integration/netns.sh`, which uses network
+namespaces. Run it with `make integration` (root) or in CI.
+
+---
+
+## Troubleshooting (keyed to `backhaul doctor`)
+
+| `doctor` result | Meaning | Fix |
+|---|---|---|
+| **privileges: WARN** | Not running as root/Administrator | Re-run the printed command (`sudo …` / elevated terminal). |
+| **endpoint DNS: FAIL** | The client can't resolve the exit hostname | Check `transport.endpoint`. Make sure the DDNS updater is running on the exit node (`ddns updated` in its logs). |
+| **endpoint TCP reachability: FAIL** — *cannot reach exit node on :443 — is the port forwarded / DDNS pointing correctly?* | Nothing is answering on the public IP:port | Check that `serve` is running, the router forwards TCP 443 to Laptop 2's **current** LAN IP, and Laptop 2's own firewall allows inbound 443. Some ISPs block inbound 443 (try `--port 8443`). Behind CGNAT, use relay mode. |
+| **TLS fingerprint: FAIL** (mismatch) | The server presents a different certificate | If you re-ran setup on the exit node, re-pair. Otherwise **don't connect**: something is intercepting TLS. |
+| **TLS fingerprint: FAIL** (handshake error) | Something other than wstunnel is on that port | Free the port on the exit node or change it on both sides. |
+| **listen port free: FAIL** | Another service (a web server?) holds :443 on the exit node | Stop it or change `transport.port` (re-pair). |
+| **DDNS / endpoint points here: FAIL** | The hostname resolves to an old IP | Enable `[ddns]` or update the A record yourself. |
+| **WireGuard handshake: FAIL** | The transport is up but WireGuard can't complete a handshake | Keys don't match (re-pair), or the transport isn't ready: check `backhaul status` → *transport* and the exit node's logs. |
+| **IP leak test: FAIL** | Egress IP is your real IP, or not the exit's | Restart `connect` and read its logs. If the exit node's public IP differs from its endpoint IP (multi-WAN, relay mode), set `client.expected_exit_ip`. |
+| **DNS leak test: FAIL** | System DNS bypasses the tunnel resolver | Make sure `serve.dns_forwarder = true` on the exit node and keep the kill-switch on. On Linux, try `client.dns_method = "resolv.conf"`. |
+| **IPv6 leak test: FAIL** | IPv6 leaves from your own address | Set `client.tunnel_ipv6 = false` (disables IPv6 for the session) and reconnect. |
+| Anything left over after a crash | The undo journal wasn't replayed | `sudo backhaul doctor --recover`. |
+
+Other notes:
+- **Windows, "create TUN … wintun.dll"**: wintun.dll must sit next to `backhaul.exe`. backhaul
+  downloads it automatically, but that needs internet access.
+- **Windows NAT on the exit node** uses WinNAT (`New-NetNat`), which allows only one NAT network
+  per host. A Docker or Hyper-V NAT can conflict with it (`Get-NetNat`).
+- **Slow or stalling sites through the tunnel**: lower `wireguard.mtu` on both sides
+  (try 1200).
+
+---
+
+## Layout
+
+```
+cmd/backhaul        CLI (cobra): setup, serve, connect, status, keys, doctor
+internal/app        serve/connect orchestration, setup logic, teardown
+internal/config     TOML config + secrets (0600), defaults, validation
+internal/keys       WireGuard keypair / PSK generation (wgctrl)
+internal/pairing    pairing blob (base64 TOML) encode/decode
+internal/wg         embedded (wireguard-go + UAPI) and wg-quick engines; Wintun installer
+internal/transport  Transport interface; supervised wstunnel; checksum-verified installer
+internal/tlspin     self-signed cert, fingerprint pinning, pinned-TLS loopback proxy
+internal/route      per-OS full-tunnel routes, DNS override, kill-switch
+internal/nat        per-OS forwarding + masquerade (nftables/iptables, pf, WinNAT)
+internal/undo       persisted undo journal → exact teardown and crash recovery
+internal/health     reconnect loop + egress/DNS/IPv6 leak probes
+internal/doctor     diagnostics with remedies
+internal/ddns       DuckDNS / Cloudflare updaters
+internal/dnsfwd     exit-node DNS relay on the tunnel IP
+internal/reach      reachability mode C stub
+test/integration    Linux netns end-to-end test
+```
+
+Places where the spec was silent and a choice was made are marked `TODO(spec)` in the source
+(`grep -rn "TODO(spec)"`).
+
+## Not yet implemented
+
+- **M8 tray GUI**: Connect/Disconnect and a status dot. The CLI is complete; the GUI comes later.
+- QR-code output of the pairing blob.
+- Reachability mode C (rendezvous / hole punching).
