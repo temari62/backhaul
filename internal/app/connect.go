@@ -24,7 +24,7 @@ import (
 // machine's routes/DNS/firewall exactly.
 func Connect(ctx context.Context, e *Env, killSwitch bool) (err error) {
 	c := e.Cfg
-	if err := e.preflight(ctx); err != nil {
+	if err := e.preflight(ctx, true); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)

@@ -114,3 +114,10 @@ func iptablesNAT(ctx context.Context, p Plan, j *undo.Journal) error {
 	}
 	return nil
 }
+
+// Available: kernel NAT is always present on Linux.
+func Available(context.Context) bool { return true }
+
+// AllowInbound is a no-op on Linux: there is no default inbound firewall.
+// TODO(spec): open the port in ufw/firewalld when they are active.
+func AllowInbound(context.Context, int, *undo.Journal) error { return nil }

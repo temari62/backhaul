@@ -194,6 +194,23 @@ If the exit node has no IPv6, client IPv6 traffic simply dies in the tunnel, whi
 
 ---
 
+## Exit-node NAT modes
+
+`serve.nat_mode` controls how tunnel traffic reaches the internet from the exit node:
+
+| Mode | How it works | Needs |
+|---|---|---|
+| `system` | Kernel forwarding and masquerade (nftables/iptables, pf, WinNAT). Fastest. | root/Administrator. On Windows, WinNAT, which only exists with the Hyper-V/Containers networking stack. |
+| `userspace` | WireGuard feeds an in-process TCP/IP stack (gVisor). backhaul re-opens every TCP connection and UDP flow from its own process, and answers DNS to the tunnel IP by relaying it upstream. | Nothing. No admin rights, no NAT feature, no TUN driver. ICMP (ping) isn't forwarded. |
+| `auto` (default) | `system` where available. **Windows 10/11 desktops without WinNAT get `userspace`.** | — |
+
+On Windows, when `serve` runs elevated, it also adds a Windows Firewall rule allowing inbound
+TCP on the wstunnel port, and removes it on exit. Without that rule the client can't connect.
+If `serve` isn't elevated, allow `wstunnel.exe` when Windows asks.
+
+backhaul's WireGuard socket is bound to **127.0.0.1** only, because it only ever talks to the
+local wstunnel. Its UDP port is never exposed on the network.
+
 ## Reachability modes
 
 - **A. Port forward + DDNS** (default): described above.
@@ -298,6 +315,15 @@ load it if group or others can read it.
 The Linux part of this checklist is automated in `test/integration/netns.sh`, which uses network
 namespaces. Run it with `make integration` (root) or in CI.
 
+There's also an end-to-end test that runs on **any OS without privileges** and changes nothing on
+the host. It runs the real exit node in userspace mode against an in-process client
+(wireguard-go on its own TCP/IP stack, the real wstunnel, and certificate pinning). It then
+fetches a public IP-echo service through the tunnel, resolving DNS through the tunnel too.
+
+```sh
+BACKHAUL_E2E=1 BACKHAUL_TEST_WSTUNNEL=/path/to/wstunnel go test ./internal/app -run E2E -v
+```
+
 ---
 
 ## Troubleshooting (keyed to `backhaul doctor`)
@@ -320,8 +346,14 @@ namespaces. Run it with `make integration` (root) or in CI.
 Other notes:
 - **Windows, "create TUN … wintun.dll"**: wintun.dll must sit next to `backhaul.exe`. backhaul
   downloads it automatically, but that needs internet access.
-- **Windows NAT on the exit node** uses WinNAT (`New-NetNat`), which allows only one NAT network
-  per host. A Docker or Hyper-V NAT can conflict with it (`Get-NetNat`).
+- **Windows exit node, `New-NetNat : Invalid class`**: this edition has no WinNAT. Use
+  `serve.nat_mode = "auto"` (the default) or `"userspace"`. WinNAT also allows only one NAT
+  network per host, so a Docker or Hyper-V NAT can conflict with it (`Get-NetNat`); `userspace`
+  avoids that too.
+- **Windows, `wsasendmsg: An invalid argument was supplied`**: a third-party Winsock layered
+  provider (some VPN, proxy or antivirus products install one) is breaking wireguard-go's default
+  sockets. backhaul uses its own plain loopback socket to avoid this, so update to the current
+  build.
 - **Slow or stalling sites through the tunnel**: lower `wireguard.mtu` on both sides
   (try 1200).
 

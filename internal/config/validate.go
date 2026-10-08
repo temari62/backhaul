@@ -167,6 +167,14 @@ func Validate(c *Config, s *Secrets) error {
 				add("serve.dns_upstream must be ip:port: %v", err)
 			}
 		}
+		switch c.Serve.NATMode {
+		case "", NATAuto, NATSystem, NATUserspace:
+		default:
+			add(`serve.nat_mode must be "auto", "system" or "userspace"`)
+		}
+		if c.Serve.UDPIdle.Duration < 0 {
+			add("serve.udp_idle must be >= 0")
+		}
 		switch c.Serve.NATBackend {
 		case "", "nftables", "iptables":
 		default:

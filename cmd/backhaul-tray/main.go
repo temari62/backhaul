@@ -10,6 +10,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,20 +57,37 @@ func (a *app) onReady() {
 	a.openLog = systray.AddMenuItem("Open log", "")
 	a.quit = systray.AddMenuItem("Quit (tunnel keeps running)", "")
 
-	if err := a.init(); err != nil {
+	go a.handleClicks()
+	go a.waitForSetup()
+}
+
+// waitForSetup retries init until a valid config exists, so running
+// `backhaul setup` while the tray is open is picked up without a restart.
+func (a *app) waitForSetup() {
+	for {
+		err := a.init()
+		if err == nil {
+			break
+		}
 		a.status.SetTitle("✕ " + err.Error())
-		systray.SetIcon(tray.Icon(tray.Failed))
+		systray.SetTooltip("Backhaul: " + err.Error())
+		a.mu.Lock()
+		changed := a.phase != tray.Failed
+		a.phase = tray.Failed
+		a.mu.Unlock()
+		if changed {
+			systray.SetIcon(tray.Icon(tray.Failed))
+		}
 		a.connect.Disable()
 		a.disconnect.Disable()
-	} else {
-		if a.cfg.Mode == config.ModeServe {
-			a.connect.SetTitle("Start exit node")
-			a.disconnect.SetTitle("Stop exit node")
-		}
-		a.refresh()
-		go a.poll()
+		time.Sleep(pollInterval)
 	}
-	go a.handleClicks()
+	if a.cfg.Mode == config.ModeServe {
+		a.connect.SetTitle("Start exit node")
+		a.disconnect.SetTitle("Stop exit node")
+	}
+	a.refresh()
+	a.poll()
 }
 
 func (a *app) init() error {
@@ -79,9 +97,14 @@ func (a *app) init() error {
 	}
 	a.paths = config.Paths{Dir: dir}
 	a.logPath = dir + string(os.PathSeparator) + "tray.log"
+	if _, err := os.Stat(a.paths.Config()); err != nil {
+		return fmt.Errorf("not set up — run `backhaul setup`")
+	}
 	cfg, _, err := config.Load(a.paths)
 	if err != nil {
-		return fmt.Errorf("not set up — run `backhaul setup`")
+		// Show the real problem (e.g. a typo in config.toml), first line only.
+		msg, _, _ := strings.Cut(err.Error(), "\n")
+		return fmt.Errorf("config error: %s", msg)
 	}
 	a.cfg = cfg
 	if a.bin, err = tray.FindBackhaul(); err != nil {

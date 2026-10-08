@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"backhaul/internal/dnsfwd"
 	"backhaul/internal/health"
 	"backhaul/internal/nat"
+	"backhaul/internal/netstack"
+	"backhaul/internal/osutil"
 	"backhaul/internal/state"
 	"backhaul/internal/tlspin"
 	"backhaul/internal/transport"
@@ -25,7 +28,11 @@ import (
 // rules and the interface, leaving the machine as found.
 func Serve(ctx context.Context, e *Env) (err error) {
 	c := e.Cfg
-	if err := e.preflight(ctx); err != nil {
+	userspace, err := resolveNATMode(ctx, c)
+	if err != nil {
+		return err
+	}
+	if err := e.preflight(ctx, serveNeedsPrivileges(c, userspace)); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -35,8 +42,10 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := ensureEngineDeps(ctx, c); err != nil {
-		return err
+	if !userspace {
+		if err := ensureEngineDeps(ctx, c); err != nil {
+			return err
+		}
 	}
 	rt := &state.Runtime{PID: os.Getpid(), Mode: config.ModeServe, Engine: c.WireGuard.Engine,
 		Started: time.Now(), Endpoint: c.Transport.Endpoint}
@@ -61,29 +70,63 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := eng.Up(ctx, wg.Settings{
+	settings := wg.Settings{
 		Interface: c.WireGuard.Interface, PrivateKey: e.Sec.PrivateKey, PresharedKey: e.Sec.PresharedKey,
 		PeerPublicKey: c.Peer.PublicKey, ListenPort: c.WireGuard.ListenPort, AllowedIPs: c.Peer.AllowedIPs,
 		MTU: c.WireGuard.MTU, Addresses: addrs, StateDir: e.Paths.State(), Journal: j,
-	}); err != nil {
+	}
+	if userspace {
+		// Userspace NAT: WireGuard feeds an in-process TCP/IP stack that
+		// re-originates every flow from this process. DNS to our tunnel IP
+		// is relayed to the upstream inside that stack.
+		own := make([]netip.Addr, len(addrs))
+		for i, a := range addrs {
+			own[i] = a.Addr()
+		}
+		upstream := ""
+		if c.Serve.DNSForwarder {
+			upstream = c.Serve.DNSUpstream
+		}
+		dev, err := netstack.New(netstack.Options{Addresses: own, MTU: c.WireGuard.MTU, DNSUpstream: upstream,
+			DialTimeout: c.Transport.DialTimeout.Duration, UDPIdle: c.Serve.UDPIdle.Duration})
+		if err != nil {
+			return fmt.Errorf("userspace NAT: %w", err)
+		}
+		settings.TUN = dev
+	}
+	if err := eng.Up(ctx, settings); err != nil {
 		return err
 	}
 	cl.push(func(ctx context.Context) { eng.Down(ctx) })
 	rt.Iface = eng.Name()
 
-	// 2. Forwarding + NAT to the internet interface.
-	sn4, _ := netip.ParsePrefix(c.WireGuard.Subnet)
-	var sn6 netip.Prefix
-	if hasV6 {
-		sn6, _ = netip.ParsePrefix(c.WireGuard.Subnet6)
-	}
-	if err := nat.Enable(ctx, nat.Plan{Iface: eng.Name(), Subnet4: sn4, Subnet6: sn6,
-		WAN: c.Serve.WANInterface, Backend: c.Serve.NATBackend}, j); err != nil {
-		return fmt.Errorf("enable NAT: %w", err)
+	// 2. Let the client in through the OS firewall (Windows blocks inbound by default).
+	if c.Reachability.Mode == config.ReachPortForward {
+		if osutil.IsElevated() {
+			if err := nat.AllowInbound(ctx, c.Transport.Port, j); err != nil {
+				slog.Warn("could not add inbound firewall rule; the client may be blocked", "port", c.Transport.Port, "err", err)
+			}
+		} else if runtime.GOOS == "windows" {
+			slog.Warn("not elevated: cannot open the Windows Firewall for inbound TCP; if the client can't connect, run serve once as administrator or allow wstunnel.exe when Windows asks",
+				"port", c.Transport.Port)
+		}
 	}
 
-	// 3. DNS forwarder on the tunnel IP, so client DNS exits here too.
-	if c.Serve.DNSForwarder {
+	// 3. Forwarding + NAT to the internet interface (system mode only).
+	if !userspace {
+		sn4, _ := netip.ParsePrefix(c.WireGuard.Subnet)
+		var sn6 netip.Prefix
+		if hasV6 {
+			sn6, _ = netip.ParsePrefix(c.WireGuard.Subnet6)
+		}
+		if err := nat.Enable(ctx, nat.Plan{Iface: eng.Name(), Subnet4: sn4, Subnet6: sn6,
+			WAN: c.Serve.WANInterface, Backend: c.Serve.NATBackend}, j); err != nil {
+			return fmt.Errorf("enable NAT: %w", err)
+		}
+	}
+
+	// 4. DNS forwarder on the tunnel IP, so client DNS exits here too.
+	if c.Serve.DNSForwarder && !userspace {
 		for _, a := range addrs {
 			listen := netip.AddrPortFrom(a.Addr(), 53).String()
 			f, err := dnsfwd.Listen(listen, c.Serve.DNSUpstream)
@@ -140,7 +183,11 @@ func Serve(ctx context.Context, e *Env) (err error) {
 		go ddns.Run(ctx, u, c.DDNS.Interval.Duration)
 	}
 
-	slog.Info("exit node ready", "iface", eng.Name(), "transport", opts.Role,
+	natMode := config.NATSystem
+	if userspace {
+		natMode = config.NATUserspace
+	}
+	slog.Info("exit node ready", "iface", eng.Name(), "nat", natMode, "transport", opts.Role,
 		"port", c.Transport.Port, "reachability", c.Reachability.Mode)
 
 	// 6. Supervise and report health until Ctrl+C / SIGTERM.
@@ -154,4 +201,35 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	}).Run(ctx)
 	slog.Info("shutting down")
 	return nil
+}
+
+// resolveNATMode decides between system NAT and userspace NAT.
+func resolveNATMode(ctx context.Context, c *config.Config) (userspace bool, err error) {
+	switch c.Serve.NATMode {
+	case config.NATUserspace:
+		userspace = true
+	case config.NATSystem:
+		userspace = false
+	default: // auto
+		userspace = !nat.Available(ctx)
+		if userspace {
+			slog.Info("system NAT is not available on this OS edition; using userspace NAT (set serve.nat_mode to override)")
+		}
+	}
+	if userspace && c.WireGuard.Engine != config.EngineEmbedded {
+		return false, fmt.Errorf(`userspace NAT requires wireguard.engine = %q`, config.EngineEmbedded)
+	}
+	return userspace, nil
+}
+
+// serveNeedsPrivileges: system NAT always needs admin/root. Userspace NAT
+// only does on Unix when binding a port below 1024.
+func serveNeedsPrivileges(c *config.Config, userspace bool) bool {
+	if !userspace {
+		return true
+	}
+	if runtime.GOOS == "windows" || c.Reachability.Mode == config.ReachRelay {
+		return false
+	}
+	return c.Transport.Port < 1024
 }

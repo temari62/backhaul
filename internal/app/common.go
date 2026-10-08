@@ -29,9 +29,6 @@ const StopPollInterval = time.Second
 // Disconnect asks a running serve/connect to tear down and waits until it
 // has restored the system (its runtime state disappears) or wait elapses.
 func Disconnect(ctx context.Context, p config.Paths, wait time.Duration) error {
-	if err := osutil.RequirePrivileges(); err != nil {
-		return err
-	}
 	rt, ok, err := state.Read(p.State())
 	if err != nil {
 		return err
@@ -41,6 +38,10 @@ func Disconnect(ctx context.Context, p config.Paths, wait time.Duration) error {
 		return errors.New("backhaul is not running")
 	}
 	if err := state.RequestStop(p.State()); err != nil {
+		// A root/admin instance owns the state dir; ask for elevation then.
+		if errors.Is(err, os.ErrPermission) && !osutil.IsElevated() {
+			return osutil.RequirePrivileges()
+		}
 		return err
 	}
 	deadline := time.Now().Add(wait)
@@ -72,9 +73,11 @@ func Recover(ctx context.Context, p config.Paths) (int, error) {
 
 // preflight checks privileges, recovers from a previous crash, and runs the
 // doctor pre-flight subset; any FAIL aborts before the system is touched.
-func (e *Env) preflight(ctx context.Context) error {
-	if err := osutil.RequirePrivileges(); err != nil {
-		return err
+func (e *Env) preflight(ctx context.Context, needPrivileges bool) error {
+	if needPrivileges {
+		if err := osutil.RequirePrivileges(); err != nil {
+			return err
+		}
 	}
 	if rt, ok, _ := state.Read(e.Paths.State()); ok && rt.Fresh(3*e.Cfg.Health.Interval.Duration) && osutil.ProcessAlive(rt.PID) {
 		return fmt.Errorf("backhaul %s already running (pid %d); stop it first", rt.Mode, rt.PID)

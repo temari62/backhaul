@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 
@@ -35,9 +34,13 @@ func (e *Embedded) Up(ctx context.Context, s Settings) error {
 	if runtime.GOOS == "darwin" && !strings.HasPrefix(name, "utun") {
 		name = "utun" // macOS only allows utun[N]; the kernel picks N
 	}
-	tdev, err := tun.CreateTUN(name, s.MTU)
-	if err != nil {
-		return fmt.Errorf("create TUN %q: %w%s", name, err, tunHint())
+	tdev := s.TUN
+	userspace := tdev != nil
+	if !userspace {
+		var err error
+		if tdev, err = tun.CreateTUN(name, s.MTU); err != nil {
+			return fmt.Errorf("create TUN %q: %w%s", name, err, tunHint())
+		}
 	}
 	real, err := tdev.Name()
 	if err != nil {
@@ -50,7 +53,7 @@ func (e *Embedded) Up(ctx context.Context, s Settings) error {
 		Verbosef: func(f string, a ...any) { slog.Debug("wireguard: "+fmt.Sprintf(f, a...), "iface", real) },
 		Errorf:   func(f string, a ...any) { slog.Warn("wireguard: "+fmt.Sprintf(f, a...), "iface", real) },
 	}
-	e.dev = device.NewDevice(tdev, conn.NewDefaultBind(), logger)
+	e.dev = device.NewDevice(tdev, NewLoopbackBind(), logger)
 
 	cfg, err := uapiConfig(s, true)
 	if err != nil {
@@ -61,16 +64,25 @@ func (e *Embedded) Up(ctx context.Context, s Settings) error {
 		e.closeLocked()
 		return fmt.Errorf("configure wireguard: %w", err)
 	}
-	if err := route.ConfigureInterface(ctx, real, s.Addresses, s.MTU); err != nil {
-		e.closeLocked()
-		return fmt.Errorf("configure interface %s: %w", real, err)
+	if !userspace {
+		if err := route.ConfigureInterface(ctx, real, s.Addresses, s.MTU); err != nil {
+			e.closeLocked()
+			return fmt.Errorf("configure interface %s: %w", real, err)
+		}
 	}
 	if err := e.dev.Up(); err != nil {
 		e.closeLocked()
 		return fmt.Errorf("bring up wireguard: %w", err)
 	}
+	if userspace {
+		// No OS interface to inspect; status uses the runtime snapshot.
+		slog.Info("wireguard up", "engine", "embedded", "nat", "userspace", "listen_port", s.ListenPort)
+		return nil
+	}
 	if l, err := uapiListen(real); err != nil {
-		slog.Warn("UAPI listener unavailable; `backhaul status` will be limited", "err", err)
+		// Expected on Windows unless running as SYSTEM (the pipe must be
+		// SYSTEM-owned). `status`/`doctor` fall back to the runtime snapshot.
+		slog.Debug("UAPI listener unavailable; status uses runtime snapshots", "err", err)
 	} else {
 		e.uapi = l
 		go func() {

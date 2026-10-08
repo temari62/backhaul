@@ -144,7 +144,21 @@ type Serve struct {
 	DNSUpstream  string `toml:"dns_upstream"`  // where the forwarder sends queries
 	WANInterface string `toml:"wan_interface,omitempty"`
 	NATBackend   string `toml:"nat_backend,omitempty"` // linux: "nftables" | "iptables" | "" (auto)
+	// NATMode picks how tunnel traffic reaches the internet:
+	//   "system"    — kernel forwarding + NAT (nftables / pf / WinNAT)
+	//   "userspace" — in-process TCP/IP stack re-originates every flow; no
+	//                 OS NAT, TUN driver or (Windows) admin rights needed
+	//   "auto"      — system, except on Windows without WinNAT
+	NATMode string   `toml:"nat_mode"`
+	UDPIdle Duration `toml:"udp_idle"` // userspace: close idle UDP flows
 }
+
+// Userspace NAT modes.
+const (
+	NATAuto      = "auto"
+	NATSystem    = "system"
+	NATUserspace = "userspace"
+)
 
 // Health configures probes and the reconnect loop (§8).
 type Health struct {
@@ -201,6 +215,8 @@ func Default() *Config {
 		Serve: Serve{
 			DNSForwarder: true,
 			DNSUpstream:  "1.1.1.1:53", // TODO(spec): spec doesn't name an upstream; Cloudflare chosen as a sane default.
+			NATMode:      NATAuto,
+			UDPIdle:      D(2 * time.Minute),
 		},
 		Health: Health{
 			Interval:         D(10 * time.Second),

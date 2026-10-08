@@ -65,3 +65,10 @@ func enable(ctx context.Context, p Plan, j *undo.Journal) error {
 	}
 	return nil
 }
+
+// Available: pf NAT is always present on macOS.
+func Available(context.Context) bool { return true }
+
+// AllowInbound is a no-op on macOS: the application firewall (if enabled)
+// prompts the user to allow wstunnel the first time it listens.
+func AllowInbound(context.Context, int, *undo.Journal) error { return nil }

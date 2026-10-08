@@ -31,4 +31,11 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod }
       - run: sudo apt-get update && sudo apt-get install -y nftables dnsmasq-base curl
-      - run: sudo -E env "PATH=$PATH" bash test/integration/netns.sh
+      - name: fetch pinned wstunnel
+        run: |
+          curl -fsSL -o /tmp/wst.tgz https://github.com/erebe/wstunnel/releases/download/v10.7.1/wstunnel_10.7.1_linux_amd64.tar.gz
+          echo "fa842ed53fbb14b1c69cd98829f9895d7f8a6b0d562c57c1175851a52cea9ea2  /tmp/wst.tgz" | sha256sum -c
+          tar -xzf /tmp/wst.tgz -C /tmp wstunnel
+      - name: unprivileged end-to-end (userspace exit node)
+        run: BACKHAUL_E2E=1 BACKHAUL_TEST_WSTUNNEL=/tmp/wstunnel go test ./internal/app ./internal/transport -run 'E2E|EndToEnd' -v
+      - run: sudo -E env "PATH=$PATH" WSTUNNEL=/tmp/wstunnel bash test/integration/netns.sh

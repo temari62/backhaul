@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.zx2c4.com/wireguard/tun"
+
 	"backhaul/internal/config"
 	"backhaul/internal/keys"
 	"backhaul/internal/undo"
@@ -30,6 +32,9 @@ type Settings struct {
 	Addresses     []netip.Prefix
 	StateDir      string        // where wg-quick writes its config
 	Journal       *undo.Journal // crash-recovery journal
+	// TUN, if set, is used instead of creating an OS TUN device (userspace
+	// NAT). No OS interface exists then: addresses/routes are not configured.
+	TUN tun.Device
 }
 
 // Stats is a point-in-time view of the single peer.
