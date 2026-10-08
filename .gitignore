@@ -1,0 +1,5 @@
+/bin/
+/dist/
+*.exe
+wintun.dll
+pairing.txt
