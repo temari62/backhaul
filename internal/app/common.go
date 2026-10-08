@@ -23,6 +23,40 @@ import (
 // TeardownTimeout bounds the restore pass so a hung command can't block exit.
 const TeardownTimeout = 60 * time.Second
 
+// StopPollInterval is how often serve/connect check for `backhaul disconnect`.
+const StopPollInterval = time.Second
+
+// Disconnect asks a running serve/connect to tear down and waits until it
+// has restored the system (its runtime state disappears) or wait elapses.
+func Disconnect(ctx context.Context, p config.Paths, wait time.Duration) error {
+	if err := osutil.RequirePrivileges(); err != nil {
+		return err
+	}
+	rt, ok, err := state.Read(p.State())
+	if err != nil {
+		return err
+	}
+	if !ok || !osutil.ProcessAlive(rt.PID) {
+		state.Remove(p.State())
+		return errors.New("backhaul is not running")
+	}
+	if err := state.RequestStop(p.State()); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		if _, ok, _ := state.Read(p.State()); !ok {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(StopPollInterval / 2):
+		}
+	}
+	return fmt.Errorf("backhaul (pid %d) did not stop within %s", rt.PID, wait)
+}
+
 // Env bundles what serve/connect need.
 type Env struct {
 	Cfg     *config.Config
@@ -42,7 +76,7 @@ func (e *Env) preflight(ctx context.Context) error {
 	if err := osutil.RequirePrivileges(); err != nil {
 		return err
 	}
-	if rt, ok, _ := state.Read(e.Paths.State()); ok && rt.Fresh(3*e.Cfg.Health.Interval.Duration) && ProcessAlive(rt.PID) {
+	if rt, ok, _ := state.Read(e.Paths.State()); ok && rt.Fresh(3*e.Cfg.Health.Interval.Duration) && osutil.ProcessAlive(rt.PID) {
 		return fmt.Errorf("backhaul %s already running (pid %d); stop it first", rt.Mode, rt.PID)
 	}
 	if n, err := Recover(ctx, e.Paths); err != nil {

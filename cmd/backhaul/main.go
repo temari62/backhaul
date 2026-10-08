@@ -68,6 +68,6 @@ func newRootCmd() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&g.configDir, "config-dir", "", "config directory (default ~/.config/backhaul, or $BACKHAUL_CONFIG_DIR)")
 	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "debug logging (secrets are never logged)")
-	root.AddCommand(setupCmd(g), serveCmd(g), connectCmd(g), statusCmd(g), keysCmd(g), doctorCmd(g))
+	root.AddCommand(setupCmd(g), pairingCmd(g), serveCmd(g), connectCmd(g), disconnectCmd(g), statusCmd(g), keysCmd(g), doctorCmd(g))
 	return root
 }

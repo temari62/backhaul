@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -56,4 +57,23 @@ func connectCmd(g *globals) *cobra.Command {
 	}
 	c.Flags().BoolVar(&noKill, "no-killswitch", false, "do not block non-tunnel traffic if the tunnel drops (your real IP can leak)")
 	return c
+}
+
+func disconnectCmd(g *globals) *cobra.Command {
+	return &cobra.Command{
+		Use:   "disconnect",
+		Short: "Stop a running serve/connect (from another terminal, a service or the tray) and wait for it to restore the system",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			p, err := g.paths()
+			if err != nil {
+				return err
+			}
+			if err := app.Disconnect(cmd.Context(), p, app.TeardownTimeout+10*time.Second); err != nil {
+				return err
+			}
+			fmt.Println("disconnected; original network configuration restored")
+			return nil
+		},
+	}
 }

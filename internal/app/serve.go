@@ -28,6 +28,9 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	if err := e.preflight(ctx); err != nil {
 		return err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go state.WatchStop(ctx, e.Paths.State(), StopPollInterval, cancel)
 	wstPath, err := transport.EnsureWstunnel(ctx, c, e.Paths.Bin())
 	if err != nil {
 		return err

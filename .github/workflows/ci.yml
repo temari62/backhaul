@@ -13,6 +13,8 @@ jobs:
         with: { go-version-file: go.mod }
       - run: go vet ./...
       - run: go test ./...
+      - name: build tray (macOS uses cgo here)
+        run: go build ./cmd/backhaul-tray
 
   cross:
     runs-on: ubuntu-latest

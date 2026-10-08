@@ -1,9 +1,10 @@
 //go:build windows
 
-package app
+package osutil
 
 import "golang.org/x/sys/windows"
 
+// ProcessAlive reports whether a process with pid is running.
 func ProcessAlive(pid int) bool {
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {

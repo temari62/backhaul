@@ -162,8 +162,10 @@ done
 echo "recovered ✓"
 
 log "assert: clean teardown restores the machines exactly"
-kill -TERM $CONNECT; wait $CONNECT || true
-kill -TERM $SERVE; wait $SERVE || true
+kill -TERM $CONNECT; wait $CONNECT || true                               # signal path
+BACKHAUL_CONFIG_DIR="$WORK/exit" nsx bh-exit "$BIN/backhaul" disconnect \
+  || fail "backhaul disconnect failed"                                    # stop-request path
+wait $SERVE || true
 snapshot bh-client > "$WORK/client.after"
 snapshot bh-exit > "$WORK/exit.after"
 diff -u "$WORK/client.before" "$WORK/client.after" || fail "client not restored"

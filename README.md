@@ -79,7 +79,9 @@ backhaul setup --yes --role serve --endpoint myhome.duckdns.org \
 ### 2. Client (Laptop 1)
 
 Move the blob over a trusted channel (USB stick, Signal, `scp`). **It contains the client's
-private key.** Then run:
+private key.** `backhaul setup --qr` (or later `backhaul pairing --qr`) also prints it as a QR
+code. Scanning it with a phone is an easy way to carry the blob to the other laptop, but anyone
+who can see the screen can copy the key. Then run:
 
 ```sh
 backhaul setup --import <blob>          # or: --import @pairing.txt
@@ -123,7 +125,7 @@ backhaul doctor
 
 On Windows, run the same commands from an elevated terminal ("Run as administrator").
 
-Press Ctrl+C (or send SIGTERM) to stop. backhaul then restores routes, DNS, firewall and NAT
+Press Ctrl+C (or send SIGTERM, or run `backhaul disconnect` from another terminal) to stop. backhaul then restores routes, DNS, firewall and NAT
 exactly as it found them. If backhaul crashes or loses power, the next `serve`/`connect` replays a
 persisted undo journal first. You can also run `sudo backhaul doctor --recover` yourself.
 
@@ -136,12 +138,39 @@ persisted undo journal first. You can also run `sudo backhaul doctor --recover` 
 | `setup` | Interactive wizard. `--import <blob>` on the client. `--yes` for non-interactive use. |
 | `serve` | Exit node: WireGuard, forwarding and NAT, a DNS forwarder on the tunnel IP, the wstunnel server, and the DDNS updater. |
 | `connect` | Client: wstunnel client, WireGuard, full-tunnel routes, DNS override, kill-switch, auto-reconnect. |
+| `disconnect` | Stop a running `serve`/`connect` from another terminal, a service or the tray, and wait until the network is restored. |
+| `pairing [--qr]` | Re-print the exit node's pairing blob, optionally as a terminal QR code. |
 | `status` | Up/down, handshake age, egress IP, bytes in/out, transport state (`--json`). |
 | `doctor` | Pre-flight and live diagnostics with remedies (`--recover` to undo a crashed run). |
 | `keys show` / `keys generate` | Public keys of both sides, or a fresh keypair and PSK for manual setups. |
 
 Global flags: `--config-dir` (or `$BACKHAUL_CONFIG_DIR`) and `-v/--verbose` for debug logs.
 Secrets are never logged.
+
+### Tray app
+
+`backhaul-tray` puts a status dot in the system tray:
+
+| Dot | Meaning |
+|---|---|
+| ● green | Connected and healthy |
+| ◐ amber | Connecting or reconnecting (the kill-switch is blocking traffic meanwhile) |
+| ○ grey | Disconnected |
+| ✕ red | The last connect attempt failed |
+
+The menu has **Connect / Disconnect** (labelled *Start / Stop exit node* on the exit node),
+**Open log** and **Quit**.
+
+- The tray itself runs **unprivileged**. Connect and Disconnect run `backhaul connect` /
+  `backhaul disconnect` through your OS's normal admin prompt: UAC on Windows, the password
+  dialog on macOS, `pkexec` on Linux.
+- Their output goes to `~/.config/backhaul/tray.log`.
+- The tunnel runs on its own, so quitting the tray leaves the VPN up. Use Disconnect first if you
+  want it down.
+
+Put `backhaul-tray` next to the `backhaul` binary (or put `backhaul` on `PATH`). On Linux it needs
+a desktop with StatusNotifier/AppIndicator support and polkit. Release binaries cover Windows and
+Linux. On macOS, build it on a Mac with `make tray`, because the macOS tray needs cgo (Cocoa).
 
 ---
 
@@ -301,7 +330,9 @@ Other notes:
 ## Layout
 
 ```
-cmd/backhaul        CLI (cobra): setup, serve, connect, status, keys, doctor
+cmd/backhaul        CLI (cobra): setup, pairing, serve, connect, disconnect, status, keys, doctor
+cmd/backhaul-tray   system-tray GUI (status dot, Connect/Disconnect)
+internal/tray       tray status model, generated icons, per-OS elevated launchers
 internal/app        serve/connect orchestration, setup logic, teardown
 internal/config     TOML config + secrets (0600), defaults, validation
 internal/keys       WireGuard keypair / PSK generation (wgctrl)
@@ -325,6 +356,5 @@ Places where the spec was silent and a choice was made are marked `TODO(spec)` i
 
 ## Not yet implemented
 
-- **M8 tray GUI**: Connect/Disconnect and a status dot. The CLI is complete; the GUI comes later.
-- QR-code output of the pairing blob.
-- Reachability mode C (rendezvous / hole punching).
+- Reachability mode C (rendezvous / hole punching). It's out of scope for v1, and there's an
+  interface stub in `internal/reach`.

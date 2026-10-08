@@ -27,6 +27,9 @@ func Connect(ctx context.Context, e *Env, killSwitch bool) (err error) {
 	if err := e.preflight(ctx); err != nil {
 		return err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go state.WatchStop(ctx, e.Paths.State(), StopPollInterval, cancel)
 	host, port, fingerprint := c.RemoteHost()
 	epIP, err := resolveEndpoint(ctx, host, c.Transport.DialTimeout.Duration)
 	if err != nil {

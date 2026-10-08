@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"backhaul/internal/app"
 	"backhaul/internal/config"
 	"backhaul/internal/health"
 	"backhaul/internal/keys"
+	"backhaul/internal/osutil"
 	"backhaul/internal/state"
 	"backhaul/internal/wg"
 )
@@ -35,7 +35,7 @@ func statusCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			up := ok && rt.Fresh(3*cfg.Health.Interval.Duration) && app.ProcessAlive(rt.PID)
+			up := ok && rt.Fresh(3*cfg.Health.Interval.Duration) && osutil.ProcessAlive(rt.PID)
 			out := map[string]any{"mode": cfg.Mode, "up": up}
 			if ok && up {
 				// Prefer live numbers from the device; fall back to the snapshot.

@@ -11,7 +11,7 @@ import (
 type ErrNotPrivileged struct{ Hint string }
 
 func (e *ErrNotPrivileged) Error() string {
-	return "this command needs administrator/root privileges (to create a TUN device and edit routes/firewall).\n" +
+	return "this command needs administrator/root privileges (it manages the tunnel interface, routes and firewall).\n" +
 		"Re-run it as:\n\n    " + e.Hint + "\n"
 }
 

@@ -19,6 +19,21 @@ builds:
       - darwin_arm64
       - windows_amd64
 
+  # Tray GUI. Windows/Linux build without cgo; the macOS tray needs cgo
+  # (Cocoa) and is built on a macOS runner: `make tray`.
+  - id: backhaul-tray
+    main: ./cmd/backhaul-tray
+    binary: backhaul-tray
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - "-s -w -X main.version={{ .Version }}"
+      - "{{ if eq .Os \"windows\" }}-H=windowsgui{{ end }}"
+    targets:
+      - linux_amd64
+      - linux_arm64
+      - windows_amd64
+
 # wstunnel (and Wintun on Windows) are not bundled: backhaul downloads the
 # pinned release on first run and verifies its SHA-256 before use.
 archives:

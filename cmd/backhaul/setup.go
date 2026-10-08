@@ -18,6 +18,8 @@ import (
 	"backhaul/internal/app"
 	"backhaul/internal/config"
 	"backhaul/internal/ddns"
+	"backhaul/internal/osutil"
+	"backhaul/internal/pairing"
 	"backhaul/internal/tlspin"
 )
 
@@ -34,6 +36,7 @@ type setupFlags struct {
 	ddnsToken  string
 	yes        bool
 	force      bool
+	qr         bool
 }
 
 func setupCmd(g *globals) *cobra.Command {
@@ -70,7 +73,41 @@ On the client (Laptop 1):      backhaul setup --import <blob>   (or --import @pa
 	fl.StringVar(&f.ddnsToken, "ddns-token", "", "DDNS API token (stored in secrets.toml)")
 	fl.BoolVarP(&f.yes, "yes", "y", false, "non-interactive: accept defaults, never prompt")
 	fl.BoolVar(&f.force, "force", false, "overwrite an existing config")
+	fl.BoolVar(&f.qr, "qr", false, "exit node: also print the pairing blob as a terminal QR code")
 	return c
+}
+
+func pairingCmd(g *globals) *cobra.Command {
+	var showQR bool
+	c := &cobra.Command{
+		Use:   "pairing",
+		Short: "Re-print the exit node's pairing blob from pairing.txt (optionally as a QR code)",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			p, err := g.paths()
+			if err != nil {
+				return err
+			}
+			b, err := os.ReadFile(p.Pairing())
+			if err != nil {
+				return fmt.Errorf("%w — pairing.txt exists only on the exit node until you delete it; re-run `backhaul setup --force` to re-pair", err)
+			}
+			blob := strings.TrimSpace(string(b))
+			fmt.Println(blob)
+			if showQR {
+				return printQR(blob)
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&showQR, "qr", false, "print as a terminal QR code")
+	return c
+}
+
+func printQR(blob string) error {
+	osutil.EnableVT()
+	fmt.Println("\nScan this QR code to copy the blob. It contains a private key, so keep the screen private:")
+	return pairing.WriteQR(os.Stdout, blob)
 }
 
 type prompter struct {
@@ -211,6 +248,9 @@ func runSetup(ctx context.Context, g *globals, f *setupFlags, subnet6Set bool) e
 		return err
 	}
 	printExitNodeNextSteps(p, res, port, reach)
+	if f.qr {
+		return printQR(res.Blob)
+	}
 	return nil
 }
 
