@@ -33,6 +33,7 @@ func (Exec) RunStdin(ctx context.Context, stdin string, name string, args ...str
 
 func run(ctx context.Context, stdin, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	HideWindow(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

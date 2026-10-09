@@ -97,6 +97,20 @@ func New(o Options) (*Device, error) {
 	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, &sack); err != nil {
 		return nil, fmt.Errorf("enable TCP SACK: %v", err)
 	}
+	// High-latency paths (e.g. China ↔ US, 200+ ms) need large, auto-tuned
+	// windows and a congestion controller built for them; gVisor's defaults
+	// (small fixed buffers, Reno) cap a single download at a crawl.
+	tuning := []tcpip.SettableTransportProtocolOption{
+		ptr(tcpip.TCPModerateReceiveBufferOption(true)),
+		&tcpip.TCPReceiveBufferSizeRangeOption{Min: tcpMinBuffer, Default: tcpDefaultBuffer, Max: tcpMaxBuffer},
+		&tcpip.TCPSendBufferSizeRangeOption{Min: tcpMinBuffer, Default: tcpDefaultBuffer, Max: tcpMaxBuffer},
+		ptr(tcpip.CongestionControlOption("cubic")),
+	}
+	for _, opt := range tuning {
+		if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, opt); err != nil {
+			return nil, fmt.Errorf("tune TCP (%T): %v", opt, err)
+		}
+	}
 	d.notify = d.ep.AddNotify(d)
 	if err := s.CreateNIC(nicID, d.ep); err != nil {
 		return nil, fmt.Errorf("create NIC: %v", err)
@@ -315,3 +329,12 @@ func (d *Device) Close() error {
 	})
 	return nil
 }
+
+// TCP buffer sizes for the userspace stack (bytes).
+const (
+	tcpMinBuffer     = 4 << 10
+	tcpDefaultBuffer = 1 << 20
+	tcpMaxBuffer     = 8 << 20
+)
+
+func ptr[T any](v T) *T { return &v }

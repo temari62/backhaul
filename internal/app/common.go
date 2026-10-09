@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strings"
 	"time"
 
 	"backhaul/internal/config"
@@ -91,9 +92,40 @@ func (e *Env) preflight(ctx context.Context, needPrivileges bool) error {
 	rs := d.Preflight(ctx)
 	if doctor.Failed(rs) {
 		doctor.Print(os.Stderr, rs)
-		return errors.New("pre-flight checks failed (see above)")
+		pe := &PreflightError{}
+		for _, r := range rs {
+			if r.Status == doctor.Fail {
+				slog.Error("pre-flight check failed", "check", r.Name, "detail", r.Detail, "fix", r.Remedy)
+				pe.Failed = append(pe.Failed, r)
+			}
+		}
+		return pe
 	}
 	return nil
+}
+
+// PreflightError lists the checks that stopped serve/connect from starting.
+type PreflightError struct{ Failed []doctor.Result }
+
+func (e *PreflightError) Error() string {
+	parts := make([]string, len(e.Failed))
+	for i, r := range e.Failed {
+		parts[i] = r.Name + ": " + r.Detail
+		if r.Remedy != "" {
+			parts[i] += " — " + r.Remedy
+		}
+	}
+	return "pre-flight checks failed: " + strings.Join(parts, "; ")
+}
+
+// Has returns the named failed check, if it failed.
+func (e *PreflightError) Has(check string) (doctor.Result, bool) {
+	for _, r := range e.Failed {
+		if r.Name == check {
+			return r, true
+		}
+	}
+	return doctor.Result{}, false
 }
 
 // cleanup is a LIFO stack of in-process teardown steps (closing the TUN,

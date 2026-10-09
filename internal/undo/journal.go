@@ -32,6 +32,9 @@ type Action struct {
 	Stdin  string   `json:"stdin,omitempty"`
 	Path   string   `json:"path,omitempty"`
 	Backup string   `json:"backup,omitempty"`
+	// BestEffort marks steps whose target may already be gone (e.g. a route
+	// on an interface that has disappeared): failure is expected, not logged.
+	BestEffort bool `json:"best_effort,omitempty"`
 }
 
 // Exec builds an exec action.
@@ -88,7 +91,9 @@ func (j *Journal) Unwind(ctx context.Context) error {
 	defer j.mu.Unlock()
 	var errs []error
 	for i := len(j.actions) - 1; i >= 0; i-- {
-		if err := run(ctx, j.actions[i]); err != nil {
+		if err := run(ctx, j.actions[i]); err != nil && j.actions[i].BestEffort {
+			slog.Debug("best-effort undo step skipped", "step", j.actions[i].Desc, "err", err)
+		} else if err != nil {
 			slog.Warn("undo step failed", "step", j.actions[i].Desc, "err", err)
 			errs = append(errs, err)
 		} else {
@@ -150,4 +155,11 @@ func run(ctx context.Context, a Action) error {
 	default:
 		return fmt.Errorf("unknown undo kind %q", a.Kind)
 	}
+}
+
+// ExecBestEffort is Exec for steps that may legitimately fail at undo time.
+func ExecBestEffort(desc string, argv ...string) Action {
+	a := Exec(desc, argv...)
+	a.BestEffort = true
+	return a
 }

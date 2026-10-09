@@ -32,7 +32,11 @@ type Runtime struct {
 	LastHandshake time.Time        `json:"last_handshake"`
 	RxBytes       int64            `json:"rx_bytes"`
 	TxBytes       int64            `json:"tx_bytes"`
+	RxRate        float64          `json:"rx_rate"` // bytes/s, sampled every few seconds
+	TxRate        float64          `json:"tx_rate"`
 	Healthy       bool             `json:"healthy"`
+	LANIP         string           `json:"lan_ip,omitempty"` // exit node: where the router must forward the port
+	Router        string           `json:"router,omitempty"` // exit node: port-forward status for humans
 	Reconnects    int              `json:"reconnects"`
 	Transport     transport.Status `json:"transport"`
 }

@@ -4,7 +4,7 @@ TARGETS := linux/amd64 linux/arm64 darwin/arm64 windows/amd64
 
 TRAY_TARGETS := linux/amd64 linux/arm64 windows/amd64
 
-.PHONY: build tray test vet cross integration clean
+.PHONY: build tray app test vet cross integration clean
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/backhaul ./cmd/backhaul
@@ -40,3 +40,10 @@ integration:
 
 clean:
 	rm -rf bin dist
+
+# All-in-one Windows desktop app (WebView2 UI, embedded wstunnel + Wintun).
+# Equivalent to build-app.ps1; run on Windows or cross-compile from anywhere.
+app:
+	go run ./cmd/backhaul-app/gen
+	go run github.com/tc-hib/go-winres@v0.3.3 make --in cmd/backhaul-app/winres/winres.json --out cmd/backhaul-app/rsrc --arch amd64
+	GOOS=windows GOARCH=amd64 go build -trimpath -ldflags '-s -w -H=windowsgui' -o dist/Backhaul.exe ./cmd/backhaul-app

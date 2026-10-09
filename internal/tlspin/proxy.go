@@ -3,6 +3,7 @@ package tlspin
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -15,14 +16,17 @@ import (
 // plain ws:// to the proxy, and the proxy provides the wss:// leg — giving us
 // real fingerprint pinning, which wstunnel itself does not offer.
 type Proxy struct {
-	ln          net.Listener
-	remote      func() string // returns current "ip:port" to dial (may change on re-resolve)
-	cfg         *tls.Config
-	dialTimeout time.Duration
-	wg          sync.WaitGroup
-	mu          sync.Mutex
-	conns       map[net.Conn]struct{}
-	lastErr     error
+	ln              net.Listener
+	remote          func() string // returns current "ip:port" to dial (may change on re-resolve)
+	cfg             *tls.Config
+	dialTimeout     time.Duration
+	wg              sync.WaitGroup
+	mu              sync.Mutex
+	conns           map[net.Conn]struct{}
+	lastErr         error
+	active          int // open upstream connections
+	everConnected   bool
+	blockedHintOnce sync.Once
 }
 
 // NewProxy listens on 127.0.0.1:0.
@@ -72,18 +76,57 @@ func (p *Proxy) handle(ctx context.Context, local net.Conn) {
 	remote, err := d.DialContext(ctx, "tcp", p.remote())
 	p.mu.Lock()
 	p.lastErr = err
+	hadSuccess := p.everConnected
+	if err == nil {
+		p.everConnected = true
+		p.active++
+	}
 	p.mu.Unlock()
 	if err != nil {
 		slog.Warn("pinned TLS dial failed", "remote", p.remote(), "err", err)
+		var ne net.Error
+		if hadSuccess && errors.As(err, &ne) && ne.Timeout() {
+			p.blockedHintOnce.Do(func() {
+				slog.Warn("the exit node answered earlier but new connections to it now time out. " +
+					"If the exit node is still running, something between the two PCs started dropping this connection: " +
+					"typically a firewall that detects and blocks VPN-like traffic (e.g. in China), or the exit node's router/ISP.")
+			})
+		}
 		return
 	}
+	start := time.Now()
+	defer func() {
+		p.mu.Lock()
+		p.active--
+		p.mu.Unlock()
+	}()
 	defer remote.Close()
 	p.track(local, remote)
 	defer p.untrack(local, remote)
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(remote, local); done <- struct{}{} }()
-	go func() { io.Copy(local, remote); done <- struct{}{} }()
-	<-done
+	type res struct {
+		dir string
+		n   int64
+		err error
+	}
+	done := make(chan res, 2)
+	go func() { n, err := io.Copy(remote, local); done <- res{"this PC → exit node", n, err} }()
+	go func() { n, err := io.Copy(local, remote); done <- res{"exit node → this PC", n, err} }()
+	r := <-done
+	if ctx.Err() == nil {
+		why := "closed"
+		if r.err != nil {
+			why = r.err.Error()
+		}
+		slog.Info("connection to the exit node ended", "after", time.Since(start).Round(time.Second), "first_direction_to_end", r.dir, "bytes", r.n, "reason", why)
+	}
+}
+
+// Down reports that no connection to the exit node is open and the last
+// attempt failed — the tunnel cannot carry traffic right now.
+func (p *Proxy) Down() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.active == 0 && p.lastErr != nil
 }
 
 func (p *Proxy) track(cs ...net.Conn) {

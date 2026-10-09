@@ -20,3 +20,16 @@ func newManager() Manager { return otherManager{} }
 func ConfigureInterface(context.Context, string, []netip.Prefix, int) error { return errUnsupported }
 
 func (otherManager) Apply(context.Context, Plan, *undo.Journal) error { return errUnsupported }
+
+func (otherManager) RepairEndpoint(context.Context, Plan, *undo.Journal) (bool, error) {
+	return false, errUnsupported
+}
+
+// OtherVPNs is unsupported here.
+func OtherVPNs(context.Context, string) ([]string, error) { return nil, nil }
+
+// EndpointPath is unsupported here.
+func EndpointPath(context.Context, netip.Addr) string { return "unknown" }
+
+// DisableKillSwitch is unsupported here.
+func DisableKillSwitch(context.Context) error { return errUnsupported }

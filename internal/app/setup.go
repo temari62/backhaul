@@ -22,6 +22,10 @@ type ExitNodeOptions struct {
 	Relay     config.Relay
 	DDNS      config.DDNS
 	DDNSToken string
+	// Transport is config.TransportWstunnel (default) or config.TransportReality.
+	Transport string
+	// RealityServerName/Target override the impersonated site (REALITY only).
+	RealityServerName, RealityTarget string
 }
 
 // SetupResult is what the exit-node setup produced.
@@ -114,6 +118,11 @@ func SetupExitNode(p config.Paths, o ExitNodeOptions) (*SetupResult, error) {
 	if o.ReachMode == config.ReachRelay {
 		b.RelayHost, b.RelayPort, b.RelayRemotePort, b.RelayTLSSHA256 = o.Relay.Host, o.Relay.Port, o.Relay.RemotePort, o.Relay.TLSSHA256
 	}
+	if o.Transport == config.TransportReality {
+		if err := setupReality(c, sec, b, o); err != nil {
+			return nil, err
+		}
+	}
 	blob, err := pairing.Encode(b)
 	if err != nil {
 		return nil, err
@@ -153,4 +162,36 @@ func randomToken(n int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// setupReality generates the REALITY credentials and records them in the
+// exit node's config/secrets and in the pairing blob.
+func setupReality(c *config.Config, sec *config.Secrets, b *pairing.Blob, o ExitNodeOptions) error {
+	kp, err := keys.NewRealityPair()
+	if err != nil {
+		return err
+	}
+	uuid, err := keys.NewUUID()
+	if err != nil {
+		return err
+	}
+	sid, err := keys.NewShortID()
+	if err != nil {
+		return err
+	}
+	r := config.Default().Transport.Reality
+	if o.RealityServerName != "" {
+		r.ServerName = o.RealityServerName
+		r.Target = o.RealityServerName + ":443"
+	}
+	if o.RealityTarget != "" {
+		r.Target = o.RealityTarget
+	}
+	r.PublicKey, r.ShortID = kp.Public, sid
+	c.Transport.Kind, c.Transport.Reality = config.TransportReality, r
+	sec.RealityPrivateKey, sec.RealityUUID = kp.Private, uuid
+	b.TransportKind = config.TransportReality
+	b.RealityServerName, b.RealityTarget, b.RealityFingerprint = r.ServerName, r.Target, r.Fingerprint
+	b.RealityPublicKey, b.RealityShortID, b.RealityUUID = kp.Public, sid, uuid
+	return nil
 }

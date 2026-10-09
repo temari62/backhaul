@@ -96,7 +96,7 @@ func (linuxManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error {
 		}
 		del := append([]string{"ip"}, args...)
 		del[3] = "del"
-		_ = j.Push(undo.Exec("remove endpoint host route", del...))
+		_ = j.Push(undo.ExecBestEffort("remove endpoint host route", del...))
 	}
 
 	// 2. Split default routes via the tunnel.
@@ -104,7 +104,7 @@ func (linuxManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error {
 		if _, err := osutil.Run(ctx, "ip", "-4", "route", "add", pf.String(), "dev", p.Iface); err != nil {
 			return err
 		}
-		_ = j.Push(undo.Exec("remove split route", "ip", "-4", "route", "del", pf.String(), "dev", p.Iface))
+		_ = j.Push(undo.ExecBestEffort("remove split route", "ip", "-4", "route", "del", pf.String(), "dev", p.Iface))
 	}
 	if p.IPv6 {
 		if err := addV6Routes(ctx, p.Iface, j); err != nil {
@@ -139,7 +139,7 @@ func addV6Routes(ctx context.Context, iface string, j *undo.Journal) error {
 		if _, err := osutil.Run(ctx, "ip", "-6", "route", "add", pf.String(), "dev", iface); err != nil {
 			return err
 		}
-		_ = j.Push(undo.Exec("remove split route v6", "ip", "-6", "route", "del", pf.String(), "dev", iface))
+		_ = j.Push(undo.ExecBestEffort("remove split route v6", "ip", "-6", "route", "del", pf.String(), "dev", iface))
 	}
 	return nil
 }
@@ -251,6 +251,94 @@ func iptablesKillSwitch(ctx context.Context, p Plan, j *undo.Journal) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (linuxManager) RepairEndpoint(ctx context.Context, p Plan, j *undo.Journal) (bool, error) {
+	repaired := false
+	for _, ep := range p.Endpoints {
+		ep = ep.Unmap()
+		if ep.IsLoopback() {
+			continue
+		}
+		_, dev, err := gatewayFor(ctx, ep)
+		if err != nil {
+			return repaired, err
+		}
+		if dev != p.Iface {
+			continue
+		}
+		fam := "-4"
+		if ep.Is6() {
+			fam = "-6"
+		}
+		out, err := osutil.Run(ctx, "ip", fam, "route", "show", "default")
+		if err != nil {
+			return repaired, err
+		}
+		via, odev := "", ""
+		for _, line := range strings.Split(out, "\n") {
+			f := strings.Fields(line)
+			v, d := "", ""
+			for i := 0; i+1 < len(f); i++ {
+				switch f[i] {
+				case "via":
+					v = f[i+1]
+				case "dev":
+					d = f[i+1]
+				}
+			}
+			if d != "" && d != p.Iface {
+				via, odev = v, d
+				break
+			}
+		}
+		if odev == "" {
+			return repaired, errOffline
+		}
+		args := []string{fam, "route", "replace", HostPrefix(ep).String()}
+		if via != "" {
+			args = append(args, "via", via)
+		}
+		args = append(args, "dev", odev)
+		if _, err := osutil.Run(ctx, "ip", args...); err != nil {
+			return repaired, err
+		}
+		del := append([]string{"ip"}, args...)
+		del[3] = "del"
+		_ = j.Push(undo.ExecBestEffort("remove endpoint host route", del...))
+		repaired = true
+	}
+	return repaired, nil
+}
+
+// OtherVPNs lists other VPN interfaces that hold full-tunnel routes.
+func OtherVPNs(ctx context.Context, own string) ([]string, error) {
+	out, err := osutil.Run(ctx, "ip", "-4", "route", "show")
+	if err != nil {
+		return nil, err
+	}
+	return UnixOtherVPNs(out, own), nil
+}
+
+// EndpointPath describes how Linux currently routes traffic to ep.
+func EndpointPath(ctx context.Context, ep netip.Addr) string {
+	via, dev, err := gatewayFor(ctx, ep)
+	if err != nil {
+		return "unknown (" + err.Error() + ")"
+	}
+	return dev + " via " + via
+}
+
+// DisableKillSwitch removes the kill-switch rules now.
+func DisableKillSwitch(ctx context.Context) error {
+	if osutil.Has("nft") {
+		_, err := osutil.Run(ctx, "nft", "delete", "table", "inet", nftTable)
+		return err
+	}
+	for _, bin := range []string{"iptables", "ip6tables"} {
+		_, _ = osutil.Run(ctx, bin, "-D", "OUTPUT", "-j", "BACKHAUL_KS")
 	}
 	return nil
 }

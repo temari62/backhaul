@@ -1,6 +1,8 @@
 package app
 
 import (
+	"encoding/base64"
+	"strings"
 	"testing"
 
 	"backhaul/internal/config"
@@ -69,5 +71,32 @@ func TestSetupExitNodeNoIPv6AndRelay(t *testing.T) {
 func TestSetupRejectsBadSubnet(t *testing.T) {
 	if _, err := SetupExitNode(config.Paths{Dir: t.TempDir()}, ExitNodeOptions{Endpoint: "x", Port: 443, Subnet: "10.9.0.0/31", ReachMode: config.ReachPortForward}); err == nil {
 		t.Fatal("expected error for /31")
+	}
+}
+
+func TestSetupRealityPairing(t *testing.T) {
+	p := config.Paths{Dir: t.TempDir()}
+	res, err := SetupExitNode(p, ExitNodeOptions{Endpoint: "50.46.184.113", Port: 443, Subnet: "10.9.0.0/24",
+		ReachMode: config.ReachPortForward, Transport: config.TransportReality})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, ssec := res.Config, res.Secrets
+	if srv.Transport.Kind != config.TransportReality || ssec.RealityPrivateKey == "" || ssec.RealityUUID == "" {
+		t.Fatalf("server not configured for REALITY: %+v", srv.Transport)
+	}
+	cli, csec, err := ImportBlob(res.Blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, _ := keys.RealityPublicFromPrivate(ssec.RealityPrivateKey)
+	if cli.Transport.Kind != config.TransportReality || cli.Transport.Reality.PublicKey != pub ||
+		cli.Transport.Reality.ShortID != srv.Transport.Reality.ShortID || csec.RealityUUID != ssec.RealityUUID ||
+		cli.Transport.Reality.ServerName != "www.amazon.com" {
+		t.Fatalf("client REALITY settings don't match the exit node:\n%+v\n%+v", cli.Transport.Reality, srv.Transport.Reality)
+	}
+	raw, _ := base64.StdEncoding.DecodeString(res.Blob)
+	if csec.RealityPrivateKey != "" || len(raw) == 0 || strings.Contains(string(raw), ssec.RealityPrivateKey) {
+		t.Fatal("the exit node's REALITY private key must never leave it")
 	}
 }

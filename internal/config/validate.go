@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"regexp"
 	"strings"
@@ -87,8 +88,35 @@ func Validate(c *Config, s *Secrets) error {
 			add("secrets: preshared_key is not a valid WireGuard key")
 		}
 	}
-	if c.Transport.Kind != "wstunnel" {
-		add("transport.kind %q unsupported (v1 ships wstunnel only)", c.Transport.Kind)
+	switch c.Transport.Kind {
+	case TransportWstunnel:
+	case TransportReality:
+		r := c.Transport.Reality
+		if r.ServerName == "" {
+			add("transport.reality.server_name is required (the website to impersonate)")
+		}
+		if _, _, err := net.SplitHostPort(r.Target); err != nil {
+			add("transport.reality.target must be host:port: %v", err)
+		}
+		if !regexp.MustCompile(`^[0-9a-f]{0,16}$`).MatchString(r.ShortID) {
+			add("transport.reality.short_id must be up to 16 lowercase hex characters")
+		}
+		if !validRealityKey(r.PublicKey) {
+			add("transport.reality.public_key is not a valid REALITY key")
+		}
+		if c.Reachability.Mode == ReachRelay {
+			add("transport.kind %q does not support relay mode yet", TransportReality)
+		}
+		if s != nil {
+			if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`).MatchString(s.RealityUUID) {
+				add("secrets: reality_uuid is not a UUID")
+			}
+			if c.Mode == ModeServe && !validRealityKey(s.RealityPrivateKey) {
+				add("secrets: reality_private_key is not a valid REALITY key")
+			}
+		}
+	default:
+		add("transport.kind must be %q or %q", TransportWstunnel, TransportReality)
 	}
 	if c.Transport.PathPrefix != "" && !regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(c.Transport.PathPrefix) {
 		add("transport.path_prefix may only contain [A-Za-z0-9_-]")
@@ -133,7 +161,7 @@ func Validate(c *Config, s *Secrets) error {
 			if c.Transport.Endpoint == "" {
 				add("transport.endpoint is required in connect mode")
 			}
-			if !ValidFingerprint(c.Transport.TLSSHA256) {
+			if c.Transport.Kind != TransportReality && !ValidFingerprint(c.Transport.TLSSHA256) {
 				add("transport.tls_sha256 must be a pinned SHA-256 fingerprint (AB:CD:...)")
 			}
 		} else if c.Reachability.Mode == ReachRelay && !ValidFingerprint(c.Reachability.Relay.TLSSHA256) {
@@ -204,4 +232,10 @@ func Validate(c *Config, s *Secrets) error {
 		msgs[i] = "  - " + e.Error()
 	}
 	return errors.New("invalid configuration:\n" + strings.Join(msgs, "\n"))
+}
+
+// validRealityKey checks an x25519 key in Xray's unpadded base64url form.
+func validRealityKey(k string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(k)
+	return err == nil && len(b) == 32
 }

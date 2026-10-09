@@ -106,3 +106,102 @@ func EnsureWstunnel(ctx context.Context, cfg *config.Config, binDir string) (str
 	slog.Info("installed wstunnel", "path", dst)
 	return dst, nil
 }
+
+// PinnedWstunnelSHA256 returns the pinned archive checksum for a wstunnel
+// version and "<goos>_<goarch>" platform ("" if not pinned).
+func PinnedWstunnelSHA256(version, platform string) string {
+	return wstunnelSHA256[version][platform]
+}
+
+// xrayAssets maps platform → release asset, and xraySHA256 pins the archive
+// checksums per version (from the GitHub release asset digests).
+var (
+	xrayAssets = map[string]string{
+		"windows_amd64": "Xray-windows-64.zip",
+		"linux_amd64":   "Xray-linux-64.zip",
+		"linux_arm64":   "Xray-linux-arm64-v8a.zip",
+		"darwin_amd64":  "Xray-macos-64.zip",
+		"darwin_arm64":  "Xray-macos-arm64-v8a.zip",
+	}
+	xraySHA256 = map[string]map[string]string{
+		"26.3.27": {
+			"windows_amd64": "d004c39288ce9ada487c6f398c7c545f7d749e44bdfdd59dbc9f865afba4e1ad",
+			"linux_amd64":   "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae",
+			"linux_arm64":   "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c",
+			"darwin_amd64":  "f5b0471d3459eff1b82e48af0aeac186abcc3298210070afbbbd8437a4e8b203",
+			"darwin_arm64":  "2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf",
+		},
+	}
+)
+
+func xrayExe() string {
+	if runtime.GOOS == "windows" {
+		return "xray.exe"
+	}
+	return "xray"
+}
+
+// XrayRelease returns the download URL and pinned checksum for a platform.
+func XrayRelease(version, platform string) (url, sha string, err error) {
+	asset, ok := xrayAssets[platform]
+	if !ok {
+		return "", "", fmt.Errorf("no Xray build for %s", platform)
+	}
+	sha = xraySHA256[version][platform]
+	if sha == "" {
+		return "", "", fmt.Errorf("no pinned checksum for Xray %s %s", version, platform)
+	}
+	return fmt.Sprintf("https://github.com/XTLS/Xray-core/releases/download/v%s/%s", version, asset), sha, nil
+}
+
+// EnsureXray returns a usable xray path: transport.xray_path, next to
+// backhaul, <config>/bin/xray-<version>/, $PATH — or downloads the pinned
+// release (checksum-verified).
+func EnsureXray(ctx context.Context, cfg *config.Config, binDir string) (string, error) {
+	if p := cfg.Transport.XrayPath; p != "" {
+		if _, err := os.Stat(p); err != nil {
+			return "", fmt.Errorf("transport.xray_path %q does not exist", p)
+		}
+		return p, nil
+	}
+	v := cfg.Transport.XrayVersion
+	dir := filepath.Join(binDir, "xray-"+v)
+	var cands []string
+	if self, err := os.Executable(); err == nil {
+		cands = append(cands, filepath.Join(filepath.Dir(self), xrayExe()))
+	}
+	cands = append(cands, filepath.Join(dir, xrayExe()))
+	for _, c := range cands {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+	if p, err := exec.LookPath("xray"); err == nil {
+		return p, nil
+	}
+	url, sha, err := XrayRelease(v, runtime.GOOS+"_"+runtime.GOARCH)
+	if err != nil {
+		return "", err
+	}
+	slog.Info("downloading xray", "version", v)
+	archive, err := fetch.Verified(ctx, url, sha)
+	if err != nil {
+		return "", fmt.Errorf("download xray: %w", err)
+	}
+	bin, err := fetch.FromZip(archive, xrayExe())
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(dir, xrayExe())
+	if err := os.WriteFile(dst+".tmp", bin, 0o755); err != nil {
+		return "", err
+	}
+	if err := os.Rename(dst+".tmp", dst); err != nil {
+		return "", err
+	}
+	slog.Info("installed xray", "path", dst)
+	return dst, nil
+}

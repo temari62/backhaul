@@ -101,16 +101,39 @@ type Transport struct {
 	RemoteUDPPort   int      `toml:"remote_udp_port"` // connect: the exit node's WireGuard UDP port
 	WstunnelPath    string   `toml:"wstunnel_path,omitempty"`
 	WstunnelVersion string   `toml:"wstunnel_version,omitempty"`
+	XrayPath        string   `toml:"xray_path,omitempty"`
+	XrayVersion     string   `toml:"xray_version,omitempty"`
+	Reality         Reality  `toml:"reality"`
 	DialTimeout     Duration `toml:"dial_timeout"`
 	ReadyTimeout    Duration `toml:"ready_timeout"`
 	BackoffMin      Duration `toml:"backoff_min"`
 	BackoffMax      Duration `toml:"backoff_max"`
 }
 
+// Transport kinds.
+const (
+	TransportWstunnel = "wstunnel" // WebSocket over TLS with a pinned self-signed certificate
+	TransportReality  = "reality"  // VLESS + REALITY via Xray: impersonates a real website
+)
+
+// Reality configures the REALITY transport. The exit node impersonates
+// ServerName (a real HTTPS site); unauthenticated visitors are relayed to
+// Target and see that site's genuine certificate.
+type Reality struct {
+	ServerName  string `toml:"server_name"`
+	Target      string `toml:"target"`      // host:port of the impersonated site
+	PublicKey   string `toml:"public_key"`  // exit node's x25519 public key (base64url)
+	ShortID     string `toml:"short_id"`    // hex
+	Fingerprint string `toml:"fingerprint"` // client uTLS fingerprint
+}
+
 // Reachability selects how the client reaches the exit node (§3).
 type Reachability struct {
 	Mode  string `toml:"mode"`
 	Relay Relay  `toml:"relay"`
+	// UPnP asks the home router to forward the port automatically
+	// (port-forward mode, exit node). Harmless when the router lacks UPnP.
+	UPnP bool `toml:"upnp"`
 }
 
 // Relay is mode B: a VPS running `wstunnel server` that both laptops dial.
@@ -131,10 +154,14 @@ type DDNS struct {
 
 // Client holds connect-mode leak-prevention settings.
 type Client struct {
-	KillSwitch     bool   `toml:"killswitch"`
-	TunnelIPv6     bool   `toml:"tunnel_ipv6"`
-	DNS            string `toml:"dns"`
-	DNSMethod      string `toml:"dns_method"`                 // linux: "auto" | "resolved" | "resolv.conf"
+	KillSwitch bool   `toml:"killswitch"`
+	TunnelIPv6 bool   `toml:"tunnel_ipv6"`
+	DNS        string `toml:"dns"`
+	DNSMethod  string `toml:"dns_method"` // linux: "auto" | "resolved" | "resolv.conf"
+	// AllowOtherVPN lets connect run while another full-tunnel VPN is active
+	// (Backhaul is then carried inside it). Off by default: two VPNs fight
+	// over the routing table.
+	AllowOtherVPN  bool   `toml:"allow_other_vpn"`
 	ExpectedExitIP string `toml:"expected_exit_ip,omitempty"` // for doctor; defaults to the endpoint's resolved IP
 }
 
@@ -169,6 +196,8 @@ type Health struct {
 	IPCheckURL       string   `toml:"ip_check_url"`
 	IPv6CheckURL     string   `toml:"ipv6_check_url"`
 	DNSLeakName      string   `toml:"dns_leak_name"`
+	ProbeName        string   `toml:"probe_name"`     // looked up through the tunnel each interval to prove it works
+	ProbeFailures    int      `toml:"probe_failures"` // consecutive failed probes before the tunnel counts as down
 	BackoffMin       Duration `toml:"backoff_min"`
 	BackoffMax       Duration `toml:"backoff_max"`
 }
@@ -196,14 +225,19 @@ func Default() *Config {
 			LocalUDPPort:    51821,
 			RemoteUDPPort:   51820,
 			WstunnelVersion: DefaultWstunnelVersion,
-			DialTimeout:     D(10 * time.Second),
-			ReadyTimeout:    D(15 * time.Second),
-			BackoffMin:      D(1 * time.Second),
-			BackoffMax:      D(60 * time.Second),
+			XrayVersion:     DefaultXrayVersion,
+			Reality: Reality{
+				ServerName: "www.amazon.com", Target: "www.amazon.com:443", Fingerprint: "chrome",
+			},
+			DialTimeout:  D(10 * time.Second),
+			ReadyTimeout: D(15 * time.Second),
+			BackoffMin:   D(1 * time.Second),
+			BackoffMax:   D(60 * time.Second),
 		},
 		Reachability: Reachability{
 			Mode:  ReachPortForward,
 			Relay: Relay{Port: 443, RemotePort: 51820},
+			UPnP:  true,
 		},
 		DDNS: DDNS{Interval: D(5 * time.Minute)},
 		Client: Client{
@@ -226,6 +260,8 @@ func Default() *Config {
 			IPCheckURL:       "https://api.ipify.org",
 			IPv6CheckURL:     "https://api6.ipify.org",
 			DNSLeakName:      "whoami.akamai.net",
+			ProbeName:        "example.com",
+			ProbeFailures:    2,
 			BackoffMin:       D(2 * time.Second),
 			BackoffMax:       D(2 * time.Minute),
 		},
@@ -236,11 +272,17 @@ func Default() *Config {
 // installed. Its per-platform SHA-256 sums are pinned in internal/transport.
 const DefaultWstunnelVersion = "10.7.1"
 
+// DefaultXrayVersion is the Xray release used for the REALITY transport.
+const DefaultXrayVersion = "26.3.27"
+
 // Secrets live in secrets.toml with 0600 perms. Never log them.
 type Secrets struct {
 	PrivateKey   string `toml:"private_key"`
 	PresharedKey string `toml:"preshared_key"`
 	DDNSToken    string `toml:"ddns_token,omitempty"`
+	// REALITY transport secrets.
+	RealityPrivateKey string `toml:"reality_private_key,omitempty"` // exit node only
+	RealityUUID       string `toml:"reality_uuid,omitempty"`        // both sides (VLESS user id)
 }
 
 // LogValue redacts secrets if a Secrets value ever reaches slog.

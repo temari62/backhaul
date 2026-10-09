@@ -27,7 +27,7 @@ func TestComplement(t *testing.T) {
 	if got := Complement(false, addrs("0.0.0.0", "255.255.255.255")); !reflect.DeepEqual(got, []string{"0.0.0.1-255.255.255.254"}) {
 		t.Fatalf("edges: %v", got)
 	}
-	if got := Complement(true, addrs("2001:db8::1")); len(got) != 2 || !strings.HasPrefix(got[1], "2001:db8::2-") {
+	if got := Complement(true, addrs("2001:db8::1")); len(got) != 3 || !strings.HasPrefix(got[2], "2001:db8::2-") || got[0] != "::1:0:0-::fffe:ffff:ffff" {
 		t.Fatalf("v6: %v", got)
 	}
 }

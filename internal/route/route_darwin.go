@@ -99,13 +99,13 @@ func (darwinManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error {
 			continue
 		}
 		del := append([]string{"route", "-q", "-n", "delete", fam, HostPrefix(ep).String()}, target...)
-		_ = j.Push(undo.Exec("remove endpoint host route", del...))
+		_ = j.Push(undo.ExecBestEffort("remove endpoint host route", del...))
 	}
 	for _, pf := range SplitV4 {
 		if _, err := osutil.Run(ctx, "route", "-q", "-n", "add", "-inet", pf.String(), "-interface", p.Iface); err != nil {
 			return err
 		}
-		_ = j.Push(undo.Exec("remove split route", "route", "-q", "-n", "delete", "-inet", pf.String(), "-interface", p.Iface))
+		_ = j.Push(undo.ExecBestEffort("remove split route", "route", "-q", "-n", "delete", "-inet", pf.String(), "-interface", p.Iface))
 	}
 	if p.IPv6 {
 		for _, pf := range SplitV6 {
@@ -114,7 +114,7 @@ func (darwinManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error {
 				p.IPv6 = false
 				break
 			}
-			_ = j.Push(undo.Exec("remove split route v6", "route", "-q", "-n", "delete", "-inet6", pf.String(), "-interface", p.Iface))
+			_ = j.Push(undo.ExecBestEffort("remove split route v6", "route", "-q", "-n", "delete", "-inet6", pf.String(), "-interface", p.Iface))
 		}
 	}
 	services, err := networkServices(ctx)
@@ -194,4 +194,81 @@ func parsePfToken(out string) string {
 		}
 	}
 	return ""
+}
+
+func (darwinManager) RepairEndpoint(ctx context.Context, p Plan, j *undo.Journal) (bool, error) {
+	repaired := false
+	for _, ep := range p.Endpoints {
+		ep = ep.Unmap()
+		if ep.IsLoopback() {
+			continue
+		}
+		_, iface, err := gatewayFor(ctx, ep)
+		if err != nil {
+			return repaired, err
+		}
+		if iface != p.Iface {
+			continue
+		}
+		fam := "-inet"
+		if ep.Is6() {
+			fam = "-inet6"
+		}
+		// Our split routes are /1s, so "default" still names the real uplink.
+		out, err := osutil.Run(ctx, "route", "-n", "get", fam, "default")
+		if err != nil {
+			return repaired, errOffline
+		}
+		gw, dif := "", ""
+		for _, line := range strings.Split(out, "\n") {
+			if k, v, ok := strings.Cut(strings.TrimSpace(line), ":"); ok {
+				switch k {
+				case "gateway":
+					gw = strings.TrimSpace(v)
+				case "interface":
+					dif = strings.TrimSpace(v)
+				}
+			}
+		}
+		if dif == "" || dif == p.Iface {
+			return repaired, errOffline
+		}
+		target := []string{gw}
+		if gw == "" || strings.HasPrefix(gw, "link#") {
+			target = []string{"-interface", dif}
+		}
+		_, _ = osutil.Run(ctx, "route", "-q", "-n", "delete", fam, HostPrefix(ep).String())
+		args := append([]string{"-q", "-n", "add", fam, HostPrefix(ep).String()}, target...)
+		if _, err := osutil.Run(ctx, "route", args...); err != nil {
+			return repaired, err
+		}
+		del := append([]string{"route", "-q", "-n", "delete", fam, HostPrefix(ep).String()}, target...)
+		_ = j.Push(undo.ExecBestEffort("remove endpoint host route", del...))
+		repaired = true
+	}
+	return repaired, nil
+}
+
+// OtherVPNs lists other VPN interfaces that hold full-tunnel routes.
+func OtherVPNs(ctx context.Context, own string) ([]string, error) {
+	out, err := osutil.Run(ctx, "netstat", "-rn", "-f", "inet")
+	if err != nil {
+		return nil, err
+	}
+	return UnixOtherVPNs(out, own), nil
+}
+
+// EndpointPath describes how macOS currently routes traffic to ep.
+func EndpointPath(ctx context.Context, ep netip.Addr) string {
+	gw, iface, err := gatewayFor(ctx, ep)
+	if err != nil {
+		return "unknown (" + err.Error() + ")"
+	}
+	return iface + " via " + gw
+}
+
+// DisableKillSwitch removes the kill-switch rules now.
+func DisableKillSwitch(ctx context.Context) error {
+	_, err := osutil.Run(ctx, "pfctl", "-a", pfAnchor, "-F", "all")
+	return err
 }

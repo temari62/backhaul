@@ -6,23 +6,14 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"runtime/pprof"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"golang.zx2c4.com/wireguard/device"
-	wgnetstack "golang.zx2c4.com/wireguard/tun/netstack"
-
 	"backhaul/internal/config"
-	"backhaul/internal/keys"
 	"backhaul/internal/state"
-	"backhaul/internal/tlspin"
-	"backhaul/internal/transport"
-	"backhaul/internal/wg"
 )
 
 func freePort(t *testing.T, network string) int {
@@ -40,7 +31,9 @@ func freePort(t *testing.T, network string) int {
 		t.Fatal(err)
 	}
 	p := l.Addr().(*net.TCPAddr).Port
-	go l.Close() // async: some Windows LSPs block Close
+	// Close synchronously so the port is really free before the caller binds
+	// it (no Accept is pending, so this can't hit the LSP close hang).
+	l.Close()
 	return p
 }
 
@@ -89,54 +82,18 @@ func TestE2EUserspaceExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy, err := tlspin.NewProxy(func() string { return "127.0.0.1:" + strconv.Itoa(wssPort) }, "127.0.0.1", cc.Transport.TLSSHA256, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	go proxy.Serve(ctx)
-	defer proxy.Close()
-	localUDP := "127.0.0.1:" + strconv.Itoa(freePort(t, "udp"))
-	tr := transport.NewWstunnel(transport.WstunnelOptions{Binary: wst, Role: transport.RoleClient,
-		ServerURL: "ws://" + proxy.Addr(), LocalUDP: localUDP, RemoteUDP: "127.0.0.1:" + strconv.Itoa(wgPort),
-		PathPrefix: cc.Transport.PathPrefix, ReadyTimeout: 15 * time.Second, BackoffMin: 200 * time.Millisecond, BackoffMax: 2 * time.Second})
-	if err := tr.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	defer tr.Stop()
-
-	tdev, tnet, err := wgnetstack.CreateNetTUN(
-		[]netip.Addr{netip.MustParseAddr("10.9.0.2")}, []netip.Addr{netip.MustParseAddr("10.9.0.1")}, cc.WireGuard.MTU)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dev := device.NewDevice(tdev, wg.NewLoopbackBind(), device.NewLogger(device.LogLevelError, "client: "))
-	defer func() { go dev.Close() }() // async: some Windows LSPs block socket Close
-	priv, _ := keys.Hex(cs.PrivateKey)
-	pub, _ := keys.Hex(cc.Peer.PublicKey)
-	psk, _ := keys.Hex(cs.PresharedKey)
-	if err := dev.IpcSet(fmt.Sprintf("private_key=%s\npublic_key=%s\npreshared_key=%s\nendpoint=%s\npersistent_keepalive_interval=5\nallowed_ip=0.0.0.0/0\n",
-		priv, pub, psk, localUDP)); err != nil {
-		t.Fatal(err)
-	}
-	if err := dev.Up(); err != nil {
-		t.Fatal(err)
-	}
+	cc.Transport.RemoteUDPPort = wgPort // the exit node's port was changed after pairing
+	c := startUserspaceClient(t, ctx, cc, cs, wst)
+	defer c.close()
+	tnet := c.net
 
 	// --- through the tunnel: DNS via 10.9.0.1 (relayed upstream) + HTTPS ---
-	tunnelHTTP := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{DialContext: tnet.DialContext}}
-	var viaTunnel string
-	deadline := time.Now().Add(45 * time.Second)
-	for {
-		if viaTunnel, err = get(tunnelHTTP, sc.Health.IPCheckURL); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			rt, _, _ := state.Read(srvPaths.State())
-			st, _ := dev.IpcGet()
-			t.Fatalf("HTTPS through the tunnel: %v\nserver runtime: %+v\nclient wg: %s\ntransport: %+v proxy err: %v",
-				err, rt, st, tr.Status(), proxy.LastError())
-		}
-		time.Sleep(time.Second)
+	viaTunnel, err := c.fetchUntil(sc.Health.IPCheckURL, 45*time.Second)
+	if err != nil {
+		rt, _, _ := state.Read(srvPaths.State())
+		st, _ := c.dev.IpcGet()
+		t.Fatalf("HTTPS through the tunnel: %v\nserver runtime: %+v\nclient wg: %s\ntransport: %+v proxy err: %v",
+			err, rt, st, c.tr.Status(), c.proxy.LastError())
 	}
 	direct, err := get(http.DefaultClient, sc.Health.IPCheckURL)
 	if err != nil {

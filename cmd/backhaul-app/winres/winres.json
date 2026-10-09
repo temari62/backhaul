@@ -1,0 +1,52 @@
+{
+  "RT_GROUP_ICON": {
+    "#1": {
+      "0000": ["icon.png", "icon16.png"]
+    }
+  },
+  "RT_MANIFEST": {
+    "#1": {
+      "0409": {
+        "identity": { "name": "Backhaul", "version": "0.4.0.0" },
+        "description": "Backhaul personal VPN",
+        "minimum-os": "win10",
+        "execution-level": "administrator",
+        "ui-access": false,
+        "auto-elevate": false,
+        "dpi-awareness": "per monitor v2",
+        "disable-theming": false,
+        "disable-window-filtering": false,
+        "high-resolution-scrolling-aware": true,
+        "ultra-high-resolution-scrolling-aware": false,
+        "long-path-aware": true,
+        "printer-driver-isolation": false,
+        "gdi-scaling": false,
+        "segment-heap": false,
+        "use-common-controls-v6": true
+      }
+    }
+  },
+  "RT_VERSION": {
+    "#1": {
+      "0000": {
+        "fixed": { "file_version": "0.4.0.0", "product_version": "0.4.0.0" },
+        "info": {
+          "0409": {
+            "Comments": "Self-hosted two-machine VPN (WireGuard over WebSocket/TLS)",
+            "CompanyName": "",
+            "FileDescription": "Backhaul",
+            "FileVersion": "0.4.0",
+            "InternalName": "Backhaul",
+            "LegalCopyright": "MIT License",
+            "LegalTrademarks": "",
+            "OriginalFilename": "Backhaul.exe",
+            "PrivateBuild": "",
+            "ProductName": "Backhaul",
+            "ProductVersion": "0.4.0",
+            "SpecialBuild": ""
+          }
+        }
+      }
+    }
+  }
+}

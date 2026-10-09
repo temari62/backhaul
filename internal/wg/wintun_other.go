@@ -9,3 +9,6 @@ func EnsureWintun(context.Context) error { return nil }
 
 // WintunPath is only meaningful on Windows.
 func WintunPath() (string, error) { return "", nil }
+
+// WintunInstalled: not needed outside Windows.
+func WintunInstalled() (string, bool) { return "", true }

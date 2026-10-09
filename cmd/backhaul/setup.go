@@ -37,6 +37,7 @@ type setupFlags struct {
 	yes        bool
 	force      bool
 	qr         bool
+	transport  string
 }
 
 func setupCmd(g *globals) *cobra.Command {
@@ -74,6 +75,7 @@ On the client (Laptop 1):      backhaul setup --import <blob>   (or --import @pa
 	fl.BoolVarP(&f.yes, "yes", "y", false, "non-interactive: accept defaults, never prompt")
 	fl.BoolVar(&f.force, "force", false, "overwrite an existing config")
 	fl.BoolVar(&f.qr, "qr", false, "exit node: also print the pairing blob as a terminal QR code")
+	fl.StringVar(&f.transport, "transport", config.TransportWstunnel, `exit node: "wstunnel", or "reality" (VLESS+REALITY via Xray: impersonates www.amazon.com; best against China's firewall)`)
 	return c
 }
 
@@ -236,7 +238,7 @@ func runSetup(ctx context.Context, g *globals, f *setupFlags, subnet6Set bool) e
 
 	res, err := app.SetupExitNode(p, app.ExitNodeOptions{
 		Endpoint: endpoint, Port: port, Subnet: subnet, Subnet6: subnet6,
-		ReachMode: reach, Relay: relay, DDNS: dd, DDNSToken: token,
+		ReachMode: reach, Relay: relay, DDNS: dd, DDNSToken: token, Transport: f.transport,
 	})
 	if err != nil {
 		return err

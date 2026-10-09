@@ -101,7 +101,7 @@ func (windowsManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error 
 		}
 		del := append([]string{"netsh"}, args...)
 		del[3] = "delete"
-		_ = j.Push(undo.Exec("remove endpoint host route", del...))
+		_ = j.Push(undo.ExecBestEffort("remove endpoint host route", del...))
 	}
 	for _, pf := range SplitV4 {
 		args := []string{"interface", "ipv4", "add", "route", "prefix=" + pf.String(), "interface=" + p.Iface, "nexthop=0.0.0.0", "metric=0", "store=active"}
@@ -110,7 +110,7 @@ func (windowsManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error 
 		}
 		del := append([]string{"netsh"}, args...)
 		del[3] = "delete"
-		_ = j.Push(undo.Exec("remove split route", del...))
+		_ = j.Push(undo.ExecBestEffort("remove split route", del...))
 	}
 	if p.IPv6 {
 		for _, pf := range SplitV6 {
@@ -122,7 +122,7 @@ func (windowsManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error 
 			}
 			del := append([]string{"netsh"}, args...)
 			del[3] = "delete"
-			_ = j.Push(undo.Exec("remove split route v6", del...))
+			_ = j.Push(undo.ExecBestEffort("remove split route v6", del...))
 		}
 	}
 	if !p.IPv6 {
@@ -173,8 +173,9 @@ func (windowsManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error 
 // TODO(spec): spec suggests raw WFP; firewall rules via PowerShell are far
 // simpler to restore. Adapters added mid-session are not covered.
 func killSwitch(ctx context.Context, p Plan, j *undo.Journal) error {
-	_ = j.Push(undo.Exec("remove kill-switch rules", psArgv(
-		fmt.Sprintf(`Remove-NetFirewallRule -Group %s -ErrorAction SilentlyContinue`, psQuote(fwGroup)))...))
+	remove := RemoveFirewallGroupScript(fwGroup)
+	_, _ = osutil.PowerShell(ctx, remove) // leftovers from an earlier run
+	_ = j.Push(undo.Exec("remove kill-switch rules", psArgv(remove)...))
 
 	// Firewall rules only apply when the profile is enabled; enable and remember.
 	out, err := osutil.PowerShell(ctx, `(Get-NetFirewallProfile | Where-Object { -not $_.Enabled }).Name -join "|"`)
@@ -190,22 +191,80 @@ func killSwitch(ctx context.Context, p Plan, j *undo.Journal) error {
 			return err
 		}
 	}
+	_, err = osutil.PowerShell(ctx, WindowsKillSwitchScript(fwGroup, p))
+	return err
+}
 
-	ranges := append(Complement(false, p.Endpoints), Complement(true, p.Endpoints)...)
-	quoted := make([]string, len(ranges))
-	for i, r := range ranges {
-		quoted[i] = psQuote(r)
+func (windowsManager) RepairEndpoint(ctx context.Context, p Plan, j *undo.Journal) (bool, error) {
+	repaired := false
+	for _, ep := range p.Endpoints {
+		ep = ep.Unmap()
+		if ep.IsLoopback() {
+			continue
+		}
+		out, err := osutil.PowerShell(ctx, WindowsEndpointRouteScript(ep, p.Iface))
+		if err != nil {
+			return repaired, err
+		}
+		chk, err := ParseEndpointRouteCheck(out)
+		if err != nil {
+			return repaired, err
+		}
+		switch chk.State {
+		case EndpointRouteOK:
+			continue
+		case EndpointRouteOffline:
+			return repaired, errOffline
+		}
+		fam := "ipv4"
+		if ep.Is6() {
+			fam = "ipv6"
+		}
+		// Drop a stale pin (e.g. via an adapter that was reset), then re-pin.
+		_, _ = osutil.PowerShell(ctx, fmt.Sprintf(`Remove-NetRoute -DestinationPrefix %s -Confirm:$false -ErrorAction SilentlyContinue`,
+			psQuote(HostPrefix(ep).String())))
+		args := []string{"interface", fam, "add", "route", "prefix=" + HostPrefix(ep).String(),
+			"interface=" + chk.IfIndex, "nexthop=" + chk.NextHop, "store=active"}
+		if _, err := osutil.Run(ctx, "netsh", args...); err != nil {
+			return repaired, err
+		}
+		del := append([]string{"netsh"}, args...)
+		del[3] = "delete"
+		_ = j.Push(undo.ExecBestEffort("remove endpoint host route", del...))
+		repaired = true
 	}
-	remote := "@(" + strings.Join(quoted, ",") + ")"
-	// UDP rule excludes DHCP server ports (67 v4, 547 v6) so the physical lease survives.
-	script := fmt.Sprintf(`
-$ifs = @(Get-NetAdapter -IncludeHidden | Where-Object { $_.Name -ne %[1]s } | Select-Object -ExpandProperty Name)
-$common = @{ Group = %[2]s; Direction = 'Outbound'; Action = 'Block'; InterfaceAlias = $ifs; RemoteAddress = %[3]s }
-New-NetFirewallRule -Name 'backhaul-ks-tcp'  -DisplayName 'Backhaul kill-switch (TCP)'  -Protocol TCP @common | Out-Null
-New-NetFirewallRule -Name 'backhaul-ks-udp'  -DisplayName 'Backhaul kill-switch (UDP)'  -Protocol UDP -RemotePort @('1-66','68-546','548-65535') @common | Out-Null
-New-NetFirewallRule -Name 'backhaul-ks-icmp' -DisplayName 'Backhaul kill-switch (ICMP)' -Protocol ICMPv4 @common | Out-Null
-New-NetFirewallRule -Name 'backhaul-ks-icmp6' -DisplayName 'Backhaul kill-switch (ICMPv6)' -Protocol ICMPv6 @common | Out-Null
-`, psQuote(p.Iface), psQuote(fwGroup), remote)
-	_, err = osutil.PowerShell(ctx, script)
+	return repaired, nil
+}
+
+// OtherVPNs lists other active VPN adapters that hold full-tunnel routes.
+func OtherVPNs(ctx context.Context, own string) ([]string, error) {
+	out, err := osutil.PowerShell(ctx, WindowsOtherVPNScript(own))
+	if err != nil {
+		return nil, err
+	}
+	var vpns []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			vpns = append(vpns, l)
+		}
+	}
+	return vpns, nil
+}
+
+// EndpointPath describes how Windows currently routes traffic to ep.
+func EndpointPath(ctx context.Context, ep netip.Addr) string {
+	out, err := osutil.PowerShell(ctx, fmt.Sprintf(
+		`$r = Find-NetRoute -RemoteIPAddress %s | Where-Object { $_.NextHop } | Select-Object -First 1; "$($r.InterfaceAlias) via $($r.NextHop)"`,
+		psQuote(ep.String())))
+	if err != nil {
+		return "unknown (" + err.Error() + ")"
+	}
+	return strings.TrimSpace(out)
+}
+
+// DisableKillSwitch removes the kill-switch rules now (the undo journal
+// still runs the same idempotent removal at teardown).
+func DisableKillSwitch(ctx context.Context) error {
+	_, err := osutil.PowerShell(ctx, RemoveFirewallGroupScript(fwGroup))
 	return err
 }

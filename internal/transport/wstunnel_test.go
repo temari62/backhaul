@@ -165,3 +165,11 @@ func TestEndToEndUDPOverPinnedWSS(t *testing.T) {
 	}
 	roundTrip("after-restart")
 }
+
+func TestAcceptRE(t *testing.T) {
+	line := `2026-10-08T17:40:29.528857Z  INFO cnx{peer="203.0.113.9:59141"}: wstunnel::tunnel::server::server: Accepting connection`
+	m := acceptRE.FindStringSubmatch(line)
+	if m == nil || m[1] != "203.0.113.9:59141" {
+		t.Fatalf("got %v", m)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"backhaul/internal/tlspin"
 	"backhaul/internal/transport"
 	"backhaul/internal/undo"
+	"backhaul/internal/upnp"
 	"backhaul/internal/wg"
 )
 
@@ -38,10 +40,6 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go state.WatchStop(ctx, e.Paths.State(), StopPollInterval, cancel)
-	wstPath, err := transport.EnsureWstunnel(ctx, c, e.Paths.Bin())
-	if err != nil {
-		return err
-	}
 	if !userspace {
 		if err := ensureEngineDeps(ctx, c); err != nil {
 			return err
@@ -138,42 +136,28 @@ func Serve(ctx context.Context, e *Env) (err error) {
 		}
 	}
 
-	// 4. Transport: wstunnel server on :443, or (relay mode) an outbound
-	//    reverse tunnel to the VPS.
-	wgLocal := "127.0.0.1:" + strconv.Itoa(c.WireGuard.ListenPort)
-	opts := transport.WstunnelOptions{
-		Binary: wstPath, PathPrefix: c.Transport.PathPrefix,
-		ReadyTimeout: c.Transport.ReadyTimeout.Duration, BackoffMin: c.Transport.BackoffMin.Duration,
-		BackoffMax: c.Transport.BackoffMax.Duration, Verbose: e.Verbose,
+	// 4. Transport: REALITY (Xray) or wstunnel server on :443, or (relay
+	//    mode) an outbound wstunnel reverse tunnel to the VPS.
+	tr, opts, err := e.serveTransport(ctx, &cl)
+	if err != nil {
+		return err
 	}
-	if c.Reachability.Mode == config.ReachRelay {
-		r := c.Reachability.Relay
-		ip, err := resolveEndpoint(ctx, r.Host, c.Transport.DialTimeout.Duration)
-		if err != nil {
-			return err
-		}
-		remote := netip.AddrPortFrom(ip, uint16(r.Port)).String()
-		proxy, err := tlspin.NewProxy(func() string { return remote }, r.Host, r.TLSSHA256, c.Transport.DialTimeout.Duration)
-		if err != nil {
-			return err
-		}
-		go proxy.Serve(ctx)
-		cl.push(func(context.Context) { proxy.Close() })
-		opts.Role, opts.ServerURL = transport.RoleReverseClient, "ws://"+proxy.Addr()
-		opts.RelayBind, opts.RemoteUDP = "127.0.0.1:"+strconv.Itoa(r.RemotePort), wgLocal
-	} else {
-		opts.Role = transport.RoleServer
-		opts.ListenAddr, opts.Port = c.Transport.ListenAddr, c.Transport.Port
-		opts.CertFile, opts.KeyFile = c.Transport.CertFile, c.Transport.KeyFile
-		opts.RestrictTo = wgLocal
-	}
-	tr := transport.NewWstunnel(opts)
 	if err := tr.Start(ctx); err != nil {
 		slog.Warn("transport not ready yet (it keeps retrying)", "err", err)
 	}
 	cl.push(func(context.Context) { tr.Stop() })
 
-	// 5. DDNS updater.
+	// 5. Router: forward the port automatically (UPnP) and detect CGNAT.
+	if c.Reachability.Mode == config.ReachPortForward {
+		rt.LANIP = osutil.LANIP()
+		var stop func()
+		rt.Router, stop = openRouterPort(ctx, c, rt.LANIP)
+		if stop != nil {
+			cl.push(func(context.Context) { stop() })
+		}
+	}
+
+	// 6. DDNS updater.
 	if c.DDNS.Provider != "" {
 		u, err := ddns.New(ddns.Options{Provider: c.DDNS.Provider, Domain: c.DDNS.Domain, Token: e.Sec.DDNSToken,
 			ZoneID: c.DDNS.ZoneID, IPCheckURL: c.Health.IPCheckURL})
@@ -190,7 +174,7 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	slog.Info("exit node ready", "iface", eng.Name(), "nat", natMode, "transport", opts.Role,
 		"port", c.Transport.Port, "reachability", c.Reachability.Mode)
 
-	// 6. Supervise and report health until Ctrl+C / SIGTERM.
+	// 7. Supervise and report health until Ctrl+C / SIGTERM.
 	(&health.Monitor{
 		Opts: health.Options{
 			Interval: c.Health.Interval.Duration, HandshakeTimeout: c.Health.HandshakeTimeout.Duration,
@@ -232,4 +216,103 @@ func serveNeedsPrivileges(c *config.Config, userspace bool) bool {
 		return false
 	}
 	return c.Transport.Port < 1024
+}
+
+// upnpTimeout bounds router discovery + mapping at startup.
+const upnpTimeout = 8 * time.Second
+
+// openRouterPort tries to forward the exit node's port on the home router via
+// UPnP and returns a human-readable status (shown by the app and status), plus
+// a stop func that removes the mapping. It never fails serve: without UPnP the
+// user just gets precise manual instructions.
+func openRouterPort(ctx context.Context, c *config.Config, lanIP string) (string, func()) {
+	port := c.Transport.Port
+	manual := fmt.Sprintf("Forward TCP %d on your router to %s (this PC)", port, lanIP)
+	if !c.Reachability.UPnP || lanIP == "" {
+		slog.Info("router port forward needed", "port", port, "to", lanIP)
+		return manual, nil
+	}
+	dctx, cancel := context.WithTimeout(ctx, upnpTimeout)
+	defer cancel()
+	m, err := upnp.Open(dctx, port, lanIP)
+	if err != nil {
+		slog.Warn("could not open the router port automatically; forward it manually", "port", port, "to", lanIP, "reason", err)
+		return manual + " — automatic setup (UPnP) didn't work: " + err.Error(), nil
+	}
+	kctx, kcancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { m.KeepAlive(kctx); close(done) }()
+	stop := func() { kcancel(); <-done }
+
+	if m.ExternalIP != "" && upnp.BehindCarrierNAT(m.ExternalIP) {
+		slog.Error("carrier-grade NAT detected: the internet can't reach this PC, port forwarding cannot work",
+			"router_wan_ip", m.ExternalIP)
+		return fmt.Sprintf("Your router's internet address is %s: your ISP uses carrier-grade NAT, so the other PC can't reach this one. "+
+			"Ask your ISP for a public IP address, or use relay mode.", m.ExternalIP), stop
+	}
+	if ep, err := netip.ParseAddr(c.Transport.Endpoint); err == nil && m.ExternalIP != "" && ep.String() != m.ExternalIP {
+		slog.Warn("the exit node address in the pairing differs from the router's public IP; the client will dial the wrong address",
+			"pairing", ep, "router_public_ip", m.ExternalIP)
+	}
+	slog.Info("router port opened automatically (UPnP)", "public", fmt.Sprintf("%s:%d", m.ExternalIP, port), "to", fmt.Sprintf("%s:%d", lanIP, port))
+	return fmt.Sprintf("Router port %d opened automatically (UPnP) → %s", port, lanIP), stop
+}
+
+// serveTransport builds the exit node's transport for the configured kind.
+// The returned options describe the wstunnel role (for logging).
+func (e *Env) serveTransport(ctx context.Context, cl *cleanup) (transport.Transport, transport.WstunnelOptions, error) {
+	c := e.Cfg
+	wgLocal := "127.0.0.1:" + strconv.Itoa(c.WireGuard.ListenPort)
+	if c.Transport.Kind == config.TransportReality {
+		xp, err := transport.EnsureXray(ctx, c, e.Paths.Bin())
+		if err != nil {
+			return nil, transport.WstunnelOptions{}, err
+		}
+		r := c.Transport.Reality
+		cfgPath := filepath.Join(e.Paths.State(), "xray-server.json")
+		tr, err := transport.NewReality(transport.RealityOptions{
+			Binary: xp, Role: transport.RoleServer, ConfigPath: cfgPath,
+			ListenAddr: c.Transport.ListenAddr, Port: c.Transport.Port, PrivateKey: e.Sec.RealityPrivateKey,
+			UUID: e.Sec.RealityUUID, ShortID: r.ShortID, ServerName: r.ServerName, Target: r.Target,
+			ReadyTimeout: c.Transport.ReadyTimeout.Duration, BackoffMin: c.Transport.BackoffMin.Duration,
+			BackoffMax: c.Transport.BackoffMax.Duration,
+		})
+		if err != nil {
+			return nil, transport.WstunnelOptions{}, err
+		}
+		cl.push(func(context.Context) { os.Remove(cfgPath) }) // contains secrets
+		return tr, transport.WstunnelOptions{Role: "reality-server"}, nil
+	}
+
+	wstPath, err := transport.EnsureWstunnel(ctx, c, e.Paths.Bin())
+	if err != nil {
+		return nil, transport.WstunnelOptions{}, err
+	}
+	opts := transport.WstunnelOptions{
+		Binary: wstPath, PathPrefix: c.Transport.PathPrefix,
+		ReadyTimeout: c.Transport.ReadyTimeout.Duration, BackoffMin: c.Transport.BackoffMin.Duration,
+		BackoffMax: c.Transport.BackoffMax.Duration, Verbose: e.Verbose,
+	}
+	if c.Reachability.Mode == config.ReachRelay {
+		r := c.Reachability.Relay
+		ip, err := resolveEndpoint(ctx, r.Host, c.Transport.DialTimeout.Duration)
+		if err != nil {
+			return nil, opts, err
+		}
+		remote := netip.AddrPortFrom(ip, uint16(r.Port)).String()
+		proxy, err := tlspin.NewProxy(func() string { return remote }, r.Host, r.TLSSHA256, c.Transport.DialTimeout.Duration)
+		if err != nil {
+			return nil, opts, err
+		}
+		go proxy.Serve(ctx)
+		cl.push(func(context.Context) { proxy.Close() })
+		opts.Role, opts.ServerURL = transport.RoleReverseClient, "ws://"+proxy.Addr()
+		opts.RelayBind, opts.RemoteUDP = "127.0.0.1:"+strconv.Itoa(r.RemotePort), wgLocal
+	} else {
+		opts.Role = transport.RoleServer
+		opts.ListenAddr, opts.Port = c.Transport.ListenAddr, c.Transport.Port
+		opts.CertFile, opts.KeyFile = c.Transport.CertFile, c.Transport.KeyFile
+		opts.RestrictTo = wgLocal
+	}
+	return transport.NewWstunnel(opts), opts, nil
 }

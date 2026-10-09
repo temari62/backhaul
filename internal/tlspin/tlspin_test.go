@@ -109,3 +109,40 @@ func TestProxyPinsAndForwards(t *testing.T) {
 		t.Fatalf("LastError = %v", bad.LastError())
 	}
 }
+
+func TestProxyDownReflectsUpstream(t *testing.T) {
+	addr, fp := tlsEcho(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p, _ := NewProxy(func() string { return addr }, "exit.example", fp, 2*time.Second)
+	go p.Serve(ctx)
+	if p.Down() {
+		t.Fatal("fresh proxy must not report down")
+	}
+	c, _ := net.Dial("tcp", p.Addr())
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	c.Write([]byte("x"))
+	io.ReadFull(c, make([]byte, 1))
+	if p.Down() {
+		t.Fatal("down while an upstream connection is open")
+	}
+	c.Close()
+
+	// Unreachable exit node: refused dial, nothing open → down.
+	dead, _ := net.Listen("tcp", "127.0.0.1:0")
+	deadAddr := dead.Addr().String()
+	dead.Close()
+	q, _ := NewProxy(func() string { return deadAddr }, "exit.example", fp, time.Second)
+	go q.Serve(ctx)
+	c2, _ := net.Dial("tcp", q.Addr())
+	c2.SetDeadline(time.Now().Add(5 * time.Second))
+	c2.Read(make([]byte, 1)) // proxy closes us after the failed dial
+	c2.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for !q.Down() {
+		if time.Now().After(deadline) {
+			t.Fatal("proxy with an unreachable exit node not reported down")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

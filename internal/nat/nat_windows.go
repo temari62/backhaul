@@ -40,7 +40,7 @@ const fwGroup = "backhaul-serve"
 // AllowInbound opens TCP port in Windows Firewall for the exit node's
 // listener (wstunnel). Without it, inbound connections are silently dropped.
 func AllowInbound(ctx context.Context, port int, j *undo.Journal) error {
-	remove := fmt.Sprintf(`Remove-NetFirewallRule -Group '%s' -ErrorAction SilentlyContinue`, fwGroup)
+	remove := fmt.Sprintf(`$r = @(Get-NetFirewallRule -Group '%s' -ErrorAction SilentlyContinue); if ($r.Count) { $r | Remove-NetFirewallRule }`, fwGroup)
 	_, _ = osutil.PowerShell(ctx, remove)
 	_ = j.Push(undo.Exec("remove inbound firewall rule", "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", remove))
 	_, err := osutil.PowerShell(ctx, fmt.Sprintf(

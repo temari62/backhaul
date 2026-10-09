@@ -4,18 +4,20 @@ package doctor
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
 	"net/netip"
-	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"backhaul/internal/config"
 	"backhaul/internal/health"
 	"backhaul/internal/osutil"
+	"backhaul/internal/route"
 	"backhaul/internal/state"
 	"backhaul/internal/tlspin"
 	"backhaul/internal/transport"
@@ -50,6 +52,7 @@ type Doctor struct {
 func (d *Doctor) Preflight(ctx context.Context) []Result {
 	rs := []Result{d.privileges()}
 	if d.Cfg.Mode == config.ModeConnect {
+		rs = append(rs, d.otherVPN(ctx))
 		rs = append(rs, d.endpointReachable(ctx)...)
 	} else if d.Cfg.Reachability.Mode == config.ReachPortForward {
 		rs = append(rs, d.portFree())
@@ -65,6 +68,7 @@ func (d *Doctor) All(ctx context.Context) []Result {
 	}
 	rt, running := d.running()
 	if d.Cfg.Mode == config.ModeConnect {
+		rs = append(rs, d.otherVPN(ctx))
 		rs = append(rs, d.endpointReachable(ctx)...)
 	} else {
 		if !running && d.Cfg.Reachability.Mode == config.ReachPortForward {
@@ -133,12 +137,11 @@ func (d *Doctor) wstunnelInstalled() Result {
 }
 
 func (d *Doctor) wintun() Result {
-	p, _ := wg.WintunPath()
-	if _, err := os.Stat(p); err == nil {
+	if p, ok := wg.WintunInstalled(); ok {
 		return Result{Name: "wintun driver", Status: Pass, Detail: p}
 	}
-	return Result{Name: "wintun driver", Status: Warn, Detail: "wintun.dll not next to backhaul.exe",
-		Remedy: "it is downloaded (checksum-verified) on first serve/connect"}
+	return Result{Name: "wintun driver", Status: Warn, Detail: "wintun.dll not installed yet",
+		Remedy: "it is downloaded (checksum-verified) on first connect, or bundled in Backhaul.exe"}
 }
 
 func (d *Doctor) endpointReachable(ctx context.Context) []Result {
@@ -148,29 +151,32 @@ func (d *Doctor) endpointReachable(ctx context.Context) []Result {
 	defer cancel()
 	ips, err := net.DefaultResolver.LookupHost(rctx, host)
 	if err != nil {
-		return []Result{{Name: "endpoint DNS", Status: Fail, Detail: fmt.Sprintf("cannot resolve %s: %v", host, err),
+		return []Result{{Name: CheckEndpointDNS, Status: Fail, Detail: fmt.Sprintf("cannot resolve %s: %v", host, err),
 			Remedy: "check transport.endpoint and that your DDNS updater is running on the exit node"}}
 	}
-	rs := []Result{{Name: "endpoint DNS", Status: Pass, Detail: fmt.Sprintf("%s → %v", host, ips)}}
+	rs := []Result{{Name: CheckEndpointDNS, Status: Pass, Detail: fmt.Sprintf("%s → %v", host, ips)}}
 	addr := net.JoinHostPort(ips[0], strconv.Itoa(port))
 	c, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
-		return append(rs, Result{Name: "endpoint TCP reachability", Status: Fail,
+		return append(rs, Result{Name: CheckEndpointTCP, Status: Fail,
 			Detail: fmt.Sprintf("cannot reach exit node on :%d — is the port forwarded / DDNS pointing correctly? (%v)", port, err),
 			Remedy: fmt.Sprintf("on the router, forward TCP %d to the exit node's LAN IP; confirm `backhaul serve` is running; confirm %s resolves to the exit node's public IP", port, host)})
 	}
 	c.Close()
-	rs = append(rs, Result{Name: "endpoint TCP reachability", Status: Pass, Detail: addr})
+	rs = append(rs, Result{Name: CheckEndpointTCP, Status: Pass, Detail: addr})
+	if d.Cfg.Transport.Kind == config.TransportReality {
+		return append(rs, d.realityCamouflage(rctx, addr))
+	}
 	got, err := tlspin.Probe(rctx, addr, host)
 	switch {
 	case err != nil:
-		rs = append(rs, Result{Name: "TLS fingerprint", Status: Fail, Detail: err.Error(),
+		rs = append(rs, Result{Name: CheckTLSPin, Status: Fail, Detail: err.Error(),
 			Remedy: "something on that port is not speaking TLS — is another service using it?"})
 	case got != tlspin.Normalize(fp):
-		rs = append(rs, Result{Name: "TLS fingerprint", Status: Fail, Detail: fmt.Sprintf("server presents %s, pinned %s", got, fp),
+		rs = append(rs, Result{Name: CheckTLSPin, Status: Fail, Detail: fmt.Sprintf("server presents %s, pinned %s", got, fp),
 			Remedy: "if you regenerated the exit node's cert, re-pair with `backhaul setup --import`; otherwise this may be a MITM — do not connect"})
 	default:
-		rs = append(rs, Result{Name: "TLS fingerprint", Status: Pass, Detail: "matches pinned certificate"})
+		rs = append(rs, Result{Name: CheckTLSPin, Status: Pass, Detail: "matches pinned certificate"})
 	}
 	return rs
 }
@@ -282,4 +288,48 @@ func (d *Doctor) ipv6Leak(ctx context.Context, rt *state.Runtime) Result {
 			Remedy: "set client.tunnel_ipv6 = false (disables v6 for the session) and reconnect"}
 	}
 	return Result{Name: "IPv6 leak test", Status: Pass, Detail: "IPv6 egress " + ip.String() + " (not a local address)"}
+}
+
+// Names of checks other packages react to.
+const (
+	CheckEndpointDNS = "endpoint DNS"
+	CheckEndpointTCP = "endpoint TCP reachability"
+	CheckTLSPin      = "TLS fingerprint"
+)
+
+// CheckOtherVPN detects another active full-tunnel VPN on the client.
+const CheckOtherVPN = "other VPN"
+
+func (d *Doctor) otherVPN(ctx context.Context) Result {
+	vpns, err := route.OtherVPNs(ctx, d.Cfg.WireGuard.Interface)
+	switch {
+	case err != nil:
+		return Result{Name: CheckOtherVPN, Status: Skip, Detail: "could not inspect routes: " + err.Error()}
+	case len(vpns) == 0:
+		return Result{Name: CheckOtherVPN, Status: Pass, Detail: "none active"}
+	case d.Cfg.Client.AllowOtherVPN:
+		return Result{Name: CheckOtherVPN, Status: Warn, Detail: "running inside: " + strings.Join(vpns, ", ")}
+	}
+	return Result{Name: CheckOtherVPN, Status: Fail,
+		Detail: "another VPN is connected: " + strings.Join(vpns, ", "),
+		Remedy: "disconnect it first — two VPNs fight over the routing table. Backhaul already disguises its traffic as HTTPS. (To run Backhaul inside it deliberately, set client.allow_other_vpn = true.)"}
+}
+
+// CheckRealityCamouflage verifies a REALITY exit node is up and disguised.
+const CheckRealityCamouflage = "REALITY camouflage"
+
+// realityCamouflage connects like any visitor would (no key) and expects the
+// impersonated site's genuine, valid certificate — which only happens when
+// the exit node's Xray is running and relaying to its target.
+func (d *Doctor) realityCamouflage(ctx context.Context, addr string) Result {
+	sni := d.Cfg.Transport.Reality.ServerName
+	dl := tls.Dialer{NetDialer: &net.Dialer{Timeout: d.Cfg.Transport.DialTimeout.Duration},
+		Config: &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12}}
+	c, err := dl.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return Result{Name: CheckRealityCamouflage, Status: Fail, Detail: err.Error(),
+			Remedy: "make sure the exit node is Sharing with the REALITY transport (a different program may be on that port)"}
+	}
+	c.Close()
+	return Result{Name: CheckRealityCamouflage, Status: Pass, Detail: "exit node presents a valid certificate for " + sni}
 }

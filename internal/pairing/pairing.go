@@ -41,6 +41,15 @@ type Blob struct {
 	TLSSHA256    string `toml:"tls_sha256"`
 	PathPrefix   string `toml:"path_prefix"`
 
+	// REALITY transport (empty TransportKind = wstunnel, for older codes).
+	TransportKind      string `toml:"transport_kind,omitempty"`
+	RealityServerName  string `toml:"reality_server_name,omitempty"`
+	RealityTarget      string `toml:"reality_target,omitempty"`
+	RealityPublicKey   string `toml:"reality_public_key,omitempty"`
+	RealityShortID     string `toml:"reality_short_id,omitempty"`
+	RealityUUID        string `toml:"reality_uuid,omitempty"`
+	RealityFingerprint string `toml:"reality_fingerprint,omitempty"`
+
 	ReachMode       string `toml:"reach_mode"`
 	RelayHost       string `toml:"relay_host,omitempty"`
 	RelayPort       int    `toml:"relay_port,omitempty"`
@@ -97,6 +106,14 @@ func (b *Blob) ClientConfig() (*config.Config, *config.Secrets) {
 	}
 	c.Transport.TLSSHA256 = b.TLSSHA256
 	c.Transport.PathPrefix = b.PathPrefix
+	if b.TransportKind == config.TransportReality {
+		c.Transport.Kind = config.TransportReality
+		c.Transport.Reality = config.Reality{ServerName: b.RealityServerName, Target: b.RealityTarget,
+			PublicKey: b.RealityPublicKey, ShortID: b.RealityShortID, Fingerprint: b.RealityFingerprint}
+		if c.Transport.Reality.Fingerprint == "" {
+			c.Transport.Reality.Fingerprint = config.Default().Transport.Reality.Fingerprint
+		}
+	}
 	c.Reachability.Mode = b.ReachMode
 	if b.ReachMode == config.ReachRelay {
 		c.Reachability.Relay = config.Relay{
@@ -109,7 +126,7 @@ func (b *Blob) ClientConfig() (*config.Config, *config.Secrets) {
 	}
 	c.Client.DNS = strings.Join(dns, ", ")
 	c.Client.TunnelIPv6 = b.Subnet6 != ""
-	return c, &config.Secrets{PrivateKey: b.ClientPrivateKey, PresharedKey: b.PresharedKey}
+	return c, &config.Secrets{PrivateKey: b.ClientPrivateKey, PresharedKey: b.PresharedKey, RealityUUID: b.RealityUUID}
 }
 
 func hostOnly(s string) string {

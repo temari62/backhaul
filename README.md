@@ -45,6 +45,47 @@ and the firewall. If you run them without it, backhaul prints the exact command 
 
 ---
 
+## Windows app (all-in-one)
+
+`Backhaul.exe` is a single file. It has a modern interface and two buttons:
+
+- **Share**: use this PC as the exit node.
+- **Connect**: send this PC's traffic through your exit node.
+
+wstunnel and the Wintun driver are built in, so there's nothing else to install.
+
+1. **On the exit node PC (Laptop 2):** open Backhaul and choose **Share**. Click **Detect** to
+   fill in the public IP (or type your DDNS hostname), then click **Set up exit node**. Backhaul
+   shows a **pairing code** with a QR code. Copy it.
+2. **On the other PC (Laptop 1):** open Backhaul, choose **Connect**, paste the pairing code and
+   click **Save pairing**.
+3. Click **Start sharing** on Laptop 2, then **Connect** on Laptop 1. The status turns green, and
+   the app shows the handshake, traffic and your new public IP.
+
+Other things to know:
+- **Admin prompt.** Backhaul asks for administrator rights once when it starts (UAC), because
+  connecting changes routes, DNS and the firewall.
+- **Closing the window.** If a tunnel is running, closing the window stops it and restores your
+  network first.
+- **Two profiles.** One PC can hold both roles: exit node and client profiles are stored
+  separately under `%USERPROFILE%\.config\backhaul`. An exit-node or client config created
+  earlier with the CLI is picked up automatically.
+- **App files.** Logs, the unpacked components and WebView2 data live in
+  `%LOCALAPPDATA%\Backhaul`.
+- **Requirements.** The Microsoft Edge **WebView2 Runtime**, which is built into Windows 11 and
+  current Windows 10. If it's missing, Backhaul says so and links to the installer.
+
+To build it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-app.ps1     # → dist\Backhaul.exe
+```
+
+The build fetches the pinned wstunnel and Wintun releases, verifies their SHA-256, and embeds
+them along with the icon and the administrator manifest.
+
+---
+
 ## One-time setup
 
 Do this while both machines are on an open network. Re-pairing from a restricted network is the
@@ -194,6 +235,28 @@ If the exit node has no IPv6, client IPv6 traffic simply dies in the tunnel, whi
 
 ---
 
+## Disguise (transport): wstunnel or REALITY
+
+Two disguises are available. You choose one when you set up the exit node, and the pairing code
+carries it to the client.
+
+| Disguise | What a censor sees | Use when |
+|---|---|---|
+| **REALITY** (VLESS + REALITY via Xray) | An ordinary HTTPS connection to a real website (default `www.amazon.com`). If the censor probes your exit node, it gets Amazon's **genuine** certificate and page. Only your client, holding the exit node's REALITY public key and VLESS ID from the pairing code, gets the tunnel. | **China** and other networks that actively detect VPNs. It's the default in the Windows app. |
+| **wstunnel** (WebSocket over TLS) | A TLS server with its own self-signed certificate. The client pins that certificate. | Networks that only block plain WireGuard. Firewalls that hunt for VPNs (like the Great Firewall) detect it within minutes. |
+
+The WireGuard encryption inside is the same either way. The disguise only decides what the
+traffic looks like on the wire.
+
+- **Change the impersonated site** with `transport.reality.server_name` and
+  `transport.reality.target` on the exit node, then set it up again. Pick a large HTTPS site
+  reachable from the client's country that supports TLS 1.3. Xray warns against Apple/iCloud.
+- **Command line:** `backhaul setup --transport reality`. Xray v26.3.27 is downloaded with a
+  pinned checksum. The Windows app has it built in.
+- **Tests:** the REALITY end-to-end test needs Linux or a normal Windows PC (it runs in CI). On
+  Windows hosts with third-party Winsock layered providers, Xray's REALITY server stalls after the
+  handshake.
+
 ## Exit-node NAT modes
 
 `serve.nat_mode` controls how tunnel traffic reaches the internet from the exit node:
@@ -331,6 +394,7 @@ BACKHAUL_E2E=1 BACKHAUL_TEST_WSTUNNEL=/path/to/wstunnel go test ./internal/app -
 | `doctor` result | Meaning | Fix |
 |---|---|---|
 | **privileges: WARN** | Not running as root/Administrator | Re-run the printed command (`sudo …` / elevated terminal). |
+| **other VPN: FAIL** | Another full-tunnel VPN (Astrill, OpenVPN, …) is connected on the client | Disconnect it before connecting Backhaul. Two VPNs fight over the routing table and both break, typically after a minute when the other VPN resets its adapter. Backhaul already disguises its traffic as HTTPS. If you deliberately want Backhaul inside the other VPN, set `client.allow_other_vpn = true`. While connected, Backhaul's route guard re-pins the path to the exit node if anything changes it, such as switching Wi-Fi networks. |
 | **endpoint DNS: FAIL** | The client can't resolve the exit hostname | Check `transport.endpoint`. Make sure the DDNS updater is running on the exit node (`ddns updated` in its logs). |
 | **endpoint TCP reachability: FAIL** — *cannot reach exit node on :443 — is the port forwarded / DDNS pointing correctly?* | Nothing is answering on the public IP:port | Check that `serve` is running, the router forwards TCP 443 to Laptop 2's **current** LAN IP, and Laptop 2's own firewall allows inbound 443. Some ISPs block inbound 443 (try `--port 8443`). Behind CGNAT, use relay mode. |
 | **TLS fingerprint: FAIL** (mismatch) | The server presents a different certificate | If you re-ran setup on the exit node, re-pair. Otherwise **don't connect**: something is intercepting TLS. |

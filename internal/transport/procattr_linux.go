@@ -12,3 +12,6 @@ import (
 func setProcAttr(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 }
+
+// afterStart is a no-op on Linux: Pdeathsig (set before start) does the job.
+func afterStart(*exec.Cmd) {}
