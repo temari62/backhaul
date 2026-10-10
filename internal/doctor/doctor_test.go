@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,5 +119,16 @@ func TestRealityCamouflageAgainstRealXray(t *testing.T) {
 	}()
 	if r := d.realityCamouflage(ctx, ln.Addr().String()); r.Status != Fail {
 		t.Fatalf("self-signed impostor accepted: %+v", r)
+	}
+}
+
+func TestCloudflareOriginResult(t *testing.T) {
+	for code, want := range map[int]Status{400: Pass, 404: Pass, 521: Fail, 522: Fail, 525: Fail, 526: Fail, 520: Fail} {
+		if r := cloudflareOriginResult(code); r.Status != want {
+			t.Errorf("HTTP %d: %s, want %s", code, r.Status, want)
+		}
+	}
+	if r := cloudflareOriginResult(522); !strings.Contains(r.Remedy, "forwards TCP 443") {
+		t.Fatalf("522 remedy should point at the port forward: %q", r.Remedy)
 	}
 }

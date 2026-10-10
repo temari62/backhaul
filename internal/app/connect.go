@@ -9,11 +9,14 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"backhaul/internal/config"
 	"backhaul/internal/health"
+	"backhaul/internal/osutil"
 	"backhaul/internal/route"
 	"backhaul/internal/state"
 	"backhaul/internal/tlspin"
@@ -33,10 +36,19 @@ func Connect(ctx context.Context, e *Env, killSwitch bool) (err error) {
 	defer cancel()
 	go state.WatchStop(ctx, e.Paths.State(), StopPollInterval, cancel)
 	host, port, fingerprint := c.RemoteHost()
-	epIP, err := resolveEndpoint(ctx, host, c.Transport.DialTimeout.Duration)
+	var pool *edgePool
+	if c.Transport.Kind == config.TransportCloudflare {
+		fingerprint = "" // verify Cloudflare's real certificate instead of pinning
+		pool, err = cloudflarePool(ctx, c, host, port)
+	} else {
+		var ip netip.Addr
+		ip, err = resolveEndpoint(ctx, host, c.Transport.DialTimeout.Duration)
+		pool = newEdgePool([]netip.Addr{ip}, port)
+	}
 	if err != nil {
 		return err
 	}
+	epIP := pool.Addr()
 	rt := &state.Runtime{
 		PID: os.Getpid(), Mode: config.ModeConnect, Engine: c.WireGuard.Engine, Started: time.Now(),
 		Endpoint: host, EndpointIP: epIP.String(), KillSwitch: killSwitch, IPv6Tunneled: c.Client.TunnelIPv6,
@@ -61,11 +73,11 @@ func Connect(ctx context.Context, e *Env, killSwitch bool) (err error) {
 
 	// 1. Transport → local UDP listener that WireGuard sends to.
 	localUDP := "127.0.0.1:" + strconv.Itoa(c.Transport.LocalUDPPort)
-	tr, linkDown, err := e.connectTransport(ctx, &cl, host, epIP, port, fingerprint, localUDP)
+	tr, linkDown, directApps, err := e.connectTransport(ctx, &cl, host, pool, fingerprint, localUDP)
 	if err != nil {
 		return err
 	}
-	cl.push(func(context.Context) { tr.Stop() })
+	cl.push("stop transport", func(context.Context) { tr.Stop() })
 
 	// 2. WireGuard, peer endpoint = the local wstunnel listener.
 	eng, err := wg.New(c.WireGuard.Engine)
@@ -88,7 +100,7 @@ func Connect(ctx context.Context, e *Env, killSwitch bool) (err error) {
 	}); err != nil {
 		return err
 	}
-	cl.push(func(ctx context.Context) { eng.Down(ctx) })
+	cl.push("close tunnel adapter", func(ctx context.Context) { eng.Down(ctx) })
 	rt.Iface = eng.Name()
 
 	// 3. Routes, DNS, kill-switch.
@@ -98,15 +110,33 @@ func Connect(ctx context.Context, e *Env, killSwitch bool) (err error) {
 	}
 	mgr := route.New()
 	plan := route.Plan{
-		Iface: eng.Name(), Endpoints: []netip.Addr{epIP}, EndpointPort: port, TunnelAddrs: hostAddrs(addrs),
-		DNS: dns, DNSMethod: c.Client.DNSMethod, IPv6: c.Client.TunnelIPv6, KillSwitch: killSwitch,
+		Iface: eng.Name(), Endpoints: pool.All(), EndpointPort: port, TunnelAddrs: hostAddrs(addrs),
+		DNS: dns, DNSMethod: c.Client.DNSMethod, IPv6: c.Client.TunnelIPv6, KillSwitch: killSwitch, PermitApps: directApps,
 	}
 	if err := mgr.Apply(ctx, plan, j); err != nil {
 		return fmt.Errorf("install routes: %w", err)
 	}
-	if killSwitch && !killSwitchLetsExitNodeThrough(ctx, epIP, port, c.Transport.DialTimeout.Duration) {
+	if killSwitch {
+		cl.push("remove kill switch", func(ctx context.Context) { _ = route.DisableKillSwitch(ctx) })
+	}
+	switch {
+	case !killSwitch:
+	case !route.KillSwitchActive():
 		killSwitch = false
-		rt.KillSwitch = false
+	case !killSwitchLetsExitNodeThrough(ctx, epIP, port, c.Transport.DialTimeout.Duration):
+		killSwitch = false
+	case runtime.GOOS == "windows" && !killSwitchLetsTunnelThrough(ctx, tunnelProbe(c, dns), c.Health.ProbeName, dns):
+		killSwitch = false
+	}
+	rt.KillSwitch = killSwitch
+	if killSwitch && runtime.GOOS == "windows" {
+		go func() { // baseline for comparing with an outage
+			select {
+			case <-ctx.Done():
+			case <-time.After(45 * time.Second):
+				slog.Info("network state with the kill switch on", "facts", route.NetworkFacts(ctx))
+			}
+		}()
 	}
 	slog.Info("connected — all traffic now exits via the exit node",
 		"iface", eng.Name(), "endpoint", host, "endpoint_ip", epIP, "killswitch", killSwitch)
@@ -120,9 +150,18 @@ func Connect(ctx context.Context, e *Env, killSwitch bool) (err error) {
 			Interval: c.Health.Interval.Duration, HandshakeTimeout: c.Health.HandshakeTimeout.Duration,
 			StartupGrace: c.Health.StartupGrace.Duration, BackoffMin: c.Health.BackoffMin.Duration,
 			BackoffMax: c.Health.BackoffMax.Duration, Reconnect: true, StateDir: e.Paths.State(),
-			Check: routeGuard(mgr, plan, j, eng, tr), CheckEvery: routeGuardEvery, LinkDown: linkDown,
+			Check: routeGuard(mgr, func() route.Plan {
+				q := plan
+				q.Endpoints = []netip.Addr{pool.Addr()} // only the address in use needs checking
+				return q
+			}, j, eng, tr), CheckEvery: routeGuardEvery, LinkDown: linkDown,
 			Probe: tunnelProbe(c, dns), ProbeFailures: c.Health.ProbeFailures,
-			OnDown: func(ctx context.Context, st wg.Stats) { diagnoseOutage(ctx, epIP, port, st, tr) },
+			OnDown: func(ctx context.Context, st wg.Stats) {
+				if !diagnoseOutage(ctx, pool.Addr(), port, st, tr) && killSwitch && runtime.GOOS == "windows" {
+					killSwitch = !killSwitchCausesOutage(ctx, plan, pool, port)
+					rt.KillSwitch = killSwitch
+				}
+			},
 			OnUp: func(d time.Duration) {
 				slog.Info("tunnel is carrying traffic again", "outage", d.Round(time.Second))
 			},
@@ -160,10 +199,10 @@ const routeGuardEvery = 6
 // Wi-Fi switch moving the default gateway — the pinned host route breaks and
 // tunnel traffic would loop into the tunnel itself. The guard re-pins it
 // through the current real uplink and kicks the transport to reconnect now.
-func routeGuard(mgr route.Manager, plan route.Plan, j *undo.Journal, eng wg.Engine, tr transport.Transport) func(context.Context) {
+func routeGuard(mgr route.Manager, plan func() route.Plan, j *undo.Journal, eng wg.Engine, tr transport.Transport) func(context.Context) {
 	last := ""
 	return func(ctx context.Context) {
-		repaired, err := mgr.RepairEndpoint(ctx, plan, j)
+		repaired, err := mgr.RepairEndpoint(ctx, plan(), j)
 		switch {
 		case err != nil:
 			if msg := err.Error(); msg != last {
@@ -185,9 +224,10 @@ func routeGuard(mgr route.Manager, plan route.Plan, j *undo.Journal, eng wg.Engi
 
 // connectTransport starts the client transport for the configured kind and
 // returns it plus a "link is down" probe (nil if the transport has none).
-func (e *Env) connectTransport(ctx context.Context, cl *cleanup, host string, epIP netip.Addr, port int,
-	fingerprint, localUDP string) (transport.Transport, func() bool, error) {
+func (e *Env) connectTransport(ctx context.Context, cl *cleanup, host string, pool *edgePool,
+	fingerprint, localUDP string) (transport.Transport, func() bool, []string, error) {
 	c := e.Cfg
+	epIP, port := pool.Addr(), pool.port
 	remoteUDP := "127.0.0.1:" + strconv.Itoa(c.Transport.RemoteUDPPort)
 	if c.Reachability.Mode == config.ReachRelay {
 		remoteUDP = "127.0.0.1:" + strconv.Itoa(c.Reachability.Relay.RemotePort)
@@ -196,7 +236,7 @@ func (e *Env) connectTransport(ctx context.Context, cl *cleanup, host string, ep
 	if c.Transport.Kind == config.TransportReality {
 		xp, err := transport.EnsureXray(ctx, c, e.Paths.Bin())
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		r := c.Transport.Reality
 		cfgPath := filepath.Join(e.Paths.State(), "xray-client.json")
@@ -209,30 +249,38 @@ func (e *Env) connectTransport(ctx context.Context, cl *cleanup, host string, ep
 			BackoffMax: c.Transport.BackoffMax.Duration,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		cl.push(func(context.Context) { os.Remove(cfgPath) }) // contains secrets
+		cl.push("remove xray config", func(context.Context) { os.Remove(cfgPath) }) // contains secrets
 		if err := tr.Start(ctx); err != nil {
 			slog.Warn("transport not ready yet; continuing (it keeps retrying)", "err", err)
 		}
-		return tr, nil, nil
+		return tr, nil, []string{xp}, nil
 	}
 
 	// wstunnel: pinned-TLS proxy + wstunnel client.
 	wstPath, err := transport.EnsureWstunnel(ctx, c, e.Paths.Bin())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	remote := netip.AddrPortFrom(epIP, uint16(port)).String()
-	proxy, err := tlspin.NewProxy(func() string { return remote }, host, fingerprint, c.Transport.DialTimeout.Duration)
+	dialTimeout := c.Transport.DialTimeout.Duration
+	if c.Transport.Kind == config.TransportCloudflare && dialTimeout > cloudflareDialTimeout {
+		dialTimeout = cloudflareDialTimeout
+	}
+	proxy, err := tlspin.NewProxy(pool.Current, host, fingerprint, dialTimeout)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	proxy.OnTrouble = pool.Trouble
 	go proxy.Serve(ctx)
-	cl.push(func(context.Context) { proxy.Close() })
+	cl.push("close TLS proxy", func(context.Context) { proxy.Close() })
+	hostHeader := ""
+	if c.Transport.Kind == config.TransportCloudflare {
+		hostHeader = host // Cloudflare routes by Host; wstunnel itself dials our local proxy
+	}
 	tr := transport.NewWstunnel(transport.WstunnelOptions{
 		Binary: wstPath, Role: transport.RoleClient,
-		ServerURL: "ws://" + proxy.Addr(), LocalUDP: localUDP, RemoteUDP: remoteUDP,
+		ServerURL: "ws://" + proxy.Addr(), LocalUDP: localUDP, RemoteUDP: remoteUDP, HostHeader: hostHeader,
 		PathPrefix: c.Transport.PathPrefix, ReadyTimeout: c.Transport.ReadyTimeout.Duration,
 		BackoffMin: c.Transport.BackoffMin.Duration, BackoffMax: c.Transport.BackoffMax.Duration,
 		Verbose: e.Verbose,
@@ -240,11 +288,11 @@ func (e *Env) connectTransport(ctx context.Context, cl *cleanup, host string, ep
 	if err := tr.Start(ctx); err != nil {
 		if errors.Is(proxy.LastError(), tlspin.ErrMismatch) {
 			tr.Stop()
-			return nil, nil, proxy.LastError()
+			return nil, nil, nil, proxy.LastError()
 		}
 		slog.Warn("transport not ready yet; continuing (it keeps retrying)", "err", err)
 	}
-	return tr, proxy.Down, nil
+	return tr, proxy.Down, nil, nil
 }
 
 // probeTimeout bounds one liveness probe (it must fit in a health tick).
@@ -271,7 +319,9 @@ func tunnelProbe(c *config.Config, dns []netip.Addr) func(context.Context) error
 // that tell the causes apart: can this PC still open a direct connection to
 // the exit node, which way does that traffic route, and what did WireGuard
 // and the transport last see.
-func diagnoseOutage(ctx context.Context, ep netip.Addr, port int, st wg.Stats, tr transport.Transport) {
+//
+// It reports whether the exit node (or Cloudflare) answered directly.
+func diagnoseOutage(ctx context.Context, ep netip.Addr, port int, st wg.Stats, tr transport.Transport) bool {
 	addr := netip.AddrPortFrom(ep, uint16(port)).String()
 	start := time.Now()
 	direct := "reachable"
@@ -296,6 +346,83 @@ func diagnoseOutage(ctx context.Context, ep netip.Addr, port int, st wg.Stats, t
 	} else {
 		slog.Warn("the exit node is still reachable directly, so the tunnel itself stalled; reconnecting")
 	}
+	return err == nil
+}
+
+// killSwitchLetsTunnelThrough is a second self-test (Windows): other
+// programs' traffic must flow through the tunnel. It compares a DNS lookup
+// through the tunnel made by Backhaul with the same lookup made by another
+// program; if only Backhaul's works, the kill switch is blocking the tunnel,
+// and staying "protected" would mean staying offline.
+func killSwitchLetsTunnelThrough(ctx context.Context, ownProbe func(context.Context) error, name string, dns []netip.Addr) bool {
+	if ownProbe == nil || len(dns) == 0 {
+		return true
+	}
+	// First wait for the tunnel to work at all, tested from Backhaul itself
+	// (which the kill switch always lets through).
+	up := false
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline) && ctx.Err() == nil; {
+		if ownProbe(ctx) == nil {
+			up = true
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if !up {
+		slog.Debug("kill-switch tunnel test skipped: the tunnel isn't carrying traffic yet")
+		return true
+	}
+	// Then the same lookup from another program, as any app would do it.
+	script := fmt.Sprintf(`Resolve-DnsName -Name '%s' -Server '%s' -DnsOnly -QuickTimeout | Out-Null`,
+		strings.ReplaceAll(name, "'", "''"), dns[0])
+	var err error
+	for i := 0; i < 3; i++ {
+		if _, err = osutil.PowerShell(ctx, script); err == nil {
+			slog.Debug("kill-switch tunnel test passed")
+			return true
+		}
+	}
+	if ownProbe(ctx) != nil {
+		return true // the tunnel itself went down meanwhile; nothing to conclude
+	}
+	slog.Error("the kill switch blocks other programs from using the tunnel on this PC; turning it off for this session so you stay connected — please report this",
+		"err", err)
+	_ = route.DisableKillSwitch(ctx)
+	return false
+}
+
+// killSwitchCausesOutage runs when the exit node (or every Cloudflare
+// address) stops answering with the kill switch on. On one user's PC that
+// happened about a minute after *any* kill switch went on — Windows Firewall
+// rules or WFP filters — and stopped when it was removed. So: record what
+// Windows thinks of the networks, lift the kill switch, and try again. If
+// the exit node answers now, the kill switch was (indirectly) the cause and
+// stays off for this session; otherwise it goes back on.
+func killSwitchCausesOutage(ctx context.Context, plan route.Plan, pool *edgePool, port int) bool {
+	slog.Warn("network state at the outage", "facts", route.NetworkFacts(ctx))
+	if err := route.DisableKillSwitch(ctx); err != nil {
+		return false
+	}
+	for i := 0; i < 3 && ctx.Err() == nil; i++ {
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		for _, ep := range []netip.Addr{pool.Addr(), pool.All()[0]} {
+			c, err := net.DialTimeout("tcp", netip.AddrPortFrom(ep, uint16(port)).String(), 4*time.Second)
+			if err == nil {
+				c.Close()
+				slog.Error("the exit node became reachable as soon as the kill switch was lifted, so the kill switch is turned OFF for this session to keep you connected. Please send this log.",
+					"facts_now", route.NetworkFacts(ctx))
+				return true
+			}
+		}
+	}
+	slog.Info("still unreachable with the kill switch lifted, so it isn't the cause; turning it back on")
+	if err := route.EnableKillSwitch(ctx, plan); err != nil {
+		slog.Error("could not turn the kill switch back on", "err", err)
+		return true
+	}
+	return false
 }
 
 // killSwitchLetsExitNodeThrough is a self-test run right after the kill

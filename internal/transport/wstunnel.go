@@ -33,7 +33,10 @@ type WstunnelOptions struct {
 	RemoteUDP string // client: target on the far side; reverse: local WG "127.0.0.1:51820"
 	RelayBind string // reverse: UDP bind on the relay, "127.0.0.1:51820"
 
-	PathPrefix   string
+	PathPrefix string
+	// HostHeader overrides the HTTP Host of the upgrade request (Cloudflare
+	// mode: the CDN routes by it while we dial our local TLS proxy).
+	HostHeader   string
 	ReadyTimeout time.Duration
 	BackoffMin   time.Duration
 	BackoffMax   time.Duration
@@ -48,7 +51,7 @@ func (o WstunnelOptions) Args() []string {
 	}
 	switch o.Role {
 	case RoleServer:
-		a := []string{"server", "--log-lvl", lvl, "--restrict-to", o.RestrictTo}
+		a := []string{"server", "--log-lvl", lvl, "--dns-resolver", systemResolver, "--restrict-to", o.RestrictTo}
 		if o.CertFile != "" {
 			a = append(a, "--tls-certificate", o.CertFile, "--tls-private-key", o.KeyFile)
 		}
@@ -57,14 +60,17 @@ func (o WstunnelOptions) Args() []string {
 		}
 		return append(a, fmt.Sprintf("wss://%s:%d", hostForURL(o.ListenAddr), o.Port))
 	case RoleClient:
-		a := []string{"client", "--log-lvl", lvl,
+		a := []string{"client", "--log-lvl", lvl, "--dns-resolver", systemResolver,
 			"-L", fmt.Sprintf("udp://%s:%s?timeout_sec=0", o.LocalUDP, o.RemoteUDP)}
 		if o.PathPrefix != "" {
 			a = append(a, "--http-upgrade-path-prefix", o.PathPrefix)
 		}
+		if o.HostHeader != "" {
+			a = append(a, "--http-headers", "Host: "+o.HostHeader)
+		}
 		return append(a, o.ServerURL)
 	case RoleReverseClient:
-		a := []string{"client", "--log-lvl", lvl,
+		a := []string{"client", "--log-lvl", lvl, "--dns-resolver", systemResolver,
 			"-R", fmt.Sprintf("udp://%s:%s?timeout_sec=0", o.RelayBind, o.RemoteUDP)}
 		if o.PathPrefix != "" {
 			a = append(a, "--http-upgrade-path-prefix", o.PathPrefix)
@@ -131,3 +137,10 @@ func filterEnv(env []string, drop ...string) []string {
 	}
 	return out
 }
+
+// systemResolver makes wstunnel resolve names with the plain OS resolver.
+// Without it, wstunnel on Windows reads the DNS configuration of every
+// network adapter at start-up, and on some machines (e.g. with adapters left
+// half-removed by another VPN) that crashes it with an access violation
+// (exit status 0xc0000005) before it does anything.
+const systemResolver = "system://0.0.0.0"

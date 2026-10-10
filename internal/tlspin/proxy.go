@@ -3,6 +3,7 @@ package tlspin
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"log/slog"
@@ -27,10 +28,25 @@ type Proxy struct {
 	active          int // open upstream connections
 	everConnected   bool
 	blockedHintOnce sync.Once
+
+	// OnTrouble, if set, is told when a dial to addr fails or an open
+	// connection to it is cut, so the caller can move to another address.
+	OnTrouble func(addr, why string)
 }
 
-// NewProxy listens on 127.0.0.1:0.
+// NewProxy listens on 127.0.0.1:0. With a pinned fingerprint it accepts only
+// that certificate; with pinned == "" it verifies the server normally
+// (trusted CAs + serverName), as for a CDN such as Cloudflare.
 func NewProxy(remote func() string, serverName, pinned string, dialTimeout time.Duration) (*Proxy, error) {
+	cfg := Config(serverName, pinned)
+	if pinned == "" {
+		cfg = VerifiedConfig(serverName, nil)
+	}
+	return NewProxyWithConfig(remote, cfg, dialTimeout)
+}
+
+// NewProxyWithConfig is NewProxy with an explicit TLS configuration.
+func NewProxyWithConfig(remote func() string, cfg *tls.Config, dialTimeout time.Duration) (*Proxy, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
@@ -38,10 +54,16 @@ func NewProxy(remote func() string, serverName, pinned string, dialTimeout time.
 	return &Proxy{
 		ln:          ln,
 		remote:      remote,
-		cfg:         Config(serverName, pinned),
+		cfg:         cfg,
 		dialTimeout: dialTimeout,
 		conns:       map[net.Conn]struct{}{},
 	}, nil
+}
+
+// VerifiedConfig verifies the server certificate against roots (nil = the
+// system trust store) for serverName — standard HTTPS validation.
+func VerifiedConfig(serverName string, roots *x509.CertPool) *tls.Config {
+	return &tls.Config{ServerName: serverName, RootCAs: roots, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
 }
 
 // Addr is the local listen address, e.g. "127.0.0.1:41234".
@@ -73,7 +95,8 @@ func (p *Proxy) Serve(ctx context.Context) {
 func (p *Proxy) handle(ctx context.Context, local net.Conn) {
 	defer local.Close()
 	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: p.dialTimeout}, Config: p.cfg}
-	remote, err := d.DialContext(ctx, "tcp", p.remote())
+	addr := p.remote()
+	remote, err := d.DialContext(ctx, "tcp", addr)
 	p.mu.Lock()
 	p.lastErr = err
 	hadSuccess := p.everConnected
@@ -83,7 +106,10 @@ func (p *Proxy) handle(ctx context.Context, local net.Conn) {
 	}
 	p.mu.Unlock()
 	if err != nil {
-		slog.Warn("pinned TLS dial failed", "remote", p.remote(), "err", err)
+		slog.Warn("TLS dial failed", "remote", addr, "err", err)
+		if p.OnTrouble != nil && ctx.Err() == nil {
+			p.OnTrouble(addr, "dial failed: "+err.Error())
+		}
 		var ne net.Error
 		if hadSuccess && errors.As(err, &ne) && ne.Timeout() {
 			p.blockedHintOnce.Do(func() {
@@ -118,6 +144,9 @@ func (p *Proxy) handle(ctx context.Context, local net.Conn) {
 			why = r.err.Error()
 		}
 		slog.Info("connection to the exit node ended", "after", time.Since(start).Round(time.Second), "first_direction_to_end", r.dir, "bytes", r.n, "reason", why)
+		if r.err != nil && p.OnTrouble != nil {
+			p.OnTrouble(addr, "connection cut")
+		}
 	}
 }
 

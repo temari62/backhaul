@@ -33,3 +33,6 @@ func EndpointPath(context.Context, netip.Addr) string { return "unknown" }
 
 // DisableKillSwitch is unsupported here.
 func DisableKillSwitch(context.Context) error { return errUnsupported }
+
+// KillSwitchActive is false: there is no kill switch here.
+func KillSwitchActive() bool { return false }

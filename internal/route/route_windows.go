@@ -4,15 +4,18 @@ package route
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"backhaul/internal/osutil"
 	"backhaul/internal/undo"
+	"backhaul/internal/wfp"
 )
 
 const fwGroup = "backhaul"
@@ -78,19 +81,27 @@ func gatewayFor(ctx context.Context, dst netip.Addr) (ifIndex, nextHop string, e
 }
 
 func (windowsManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error {
+	type uplink struct{ idx, gw string }
+	uplinks := map[string]uplink{} // per family: a Cloudflare pool has many endpoints
 	for _, ep := range p.Endpoints {
 		ep = ep.Unmap()
 		if ep.IsLoopback() {
 			continue
 		}
-		idx, gw, err := gatewayFor(ctx, ep)
-		if err != nil {
-			return fmt.Errorf("find physical route to endpoint: %w", err)
-		}
 		fam := "ipv4"
 		if ep.Is6() {
 			fam = "ipv6"
 		}
+		u, ok := uplinks[fam]
+		if !ok {
+			idx, gw, err := gatewayFor(ctx, ep)
+			if err != nil {
+				return fmt.Errorf("find physical route to endpoint: %w", err)
+			}
+			u = uplink{idx, gw}
+			uplinks[fam] = u
+		}
+		idx, gw := u.idx, u.gw
 		args := []string{"interface", fam, "add", "route", "prefix=" + HostPrefix(ep).String(),
 			"interface=" + idx, "nexthop=" + gw, "store=active"}
 		if _, err := osutil.Run(ctx, "netsh", args...); err != nil {
@@ -167,33 +178,60 @@ func (windowsManager) Apply(ctx context.Context, p Plan, j *undo.Journal) error 
 	return nil
 }
 
-// killSwitch blocks outbound traffic on every non-tunnel adapter except to
-// the exit endpoint. Windows Firewall block rules override allow rules, so
-// pre-existing allow rules (e.g. Core Networking DNS) cannot leak.
-// TODO(spec): spec suggests raw WFP; firewall rules via PowerShell are far
-// simpler to restore. Adapters added mid-session are not covered.
+// killSwitch blocks all traffic except through the tunnel adapter, from
+// Backhaul itself and the programs in p.PermitApps (which carry the tunnel to
+// the exit node), on loopback, and for DHCP / IPv6 neighbour discovery.
+//
+// It uses Windows Filtering Platform filters in a dynamic session (package
+// wfp) rather than Windows Firewall rules: on a user's PC, firewall rules
+// started blocking the exit node about a minute after being installed. The
+// filters vanish by themselves when Backhaul exits, so there is nothing to
+// undo after a crash. If they can't be installed, the session continues
+// without a kill switch (KillSwitchActive reports false) rather than failing.
 func killSwitch(ctx context.Context, p Plan, j *undo.Journal) error {
+	// Rules from versions that used Windows Firewall.
 	remove := RemoveFirewallGroupScript(fwGroup)
-	_, _ = osutil.PowerShell(ctx, remove) // leftovers from an earlier run
-	_ = j.Push(undo.Exec("remove kill-switch rules", psArgv(remove)...))
+	_, _ = osutil.PowerShell(ctx, remove)
 
-	// Firewall rules only apply when the profile is enabled; enable and remember.
-	out, err := osutil.PowerShell(ctx, `(Get-NetFirewallProfile | Where-Object { -not $_.Enabled }).Name -join "|"`)
+	luid, err := wfp.InterfaceLUID(p.Iface)
+	if err == nil {
+		var self string
+		if self, err = os.Executable(); err == nil {
+			err = wfp.Enable(wfp.Options{TunLUID: luid, PermitApps: append([]string{self}, p.PermitApps...),
+				PermitServices: []string{"NlaSvc"}, AllowLAN: true})
+		}
+	}
 	if err != nil {
-		return err
+		slog.Error("could not install the kill switch; continuing without it", "err", err)
 	}
-	for _, prof := range strings.Split(out, "|") {
-		if prof = strings.TrimSpace(prof); prof == "" {
-			continue
-		}
-		_ = j.Push(undo.Exec("restore firewall profile "+prof, psArgv(fmt.Sprintf(`Set-NetFirewallProfile -Name %s -Enabled False`, psQuote(prof)))...))
-		if _, err := osutil.PowerShell(ctx, fmt.Sprintf(`Set-NetFirewallProfile -Name %s -Enabled True`, psQuote(prof))); err != nil {
-			return err
-		}
-	}
-	_, err = osutil.PowerShell(ctx, WindowsKillSwitchScript(fwGroup, p))
-	return err
+	return nil
 }
+
+// EnableKillSwitch (re)installs the kill switch for p.
+func EnableKillSwitch(ctx context.Context, p Plan) error {
+	_ = killSwitch(ctx, p, nil)
+	if !wfp.Enabled() {
+		return errors.New("kill switch not installed (see the log)")
+	}
+	return nil
+}
+
+// NetworkFacts summarises what Windows thinks of each network: its category
+// and whether it has internet access (per Windows' connectivity check), and
+// what kind of adapter each active one is.
+func NetworkFacts(ctx context.Context) string {
+	out, err := osutil.PowerShell(ctx, `
+$c = Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach-Object { "$($_.InterfaceAlias): $($_.NetworkCategory), IPv4=$($_.IPv4Connectivity)" }
+$a = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up' | ForEach-Object { "$($_.Name)=$($_.InterfaceDescription)" }
+"networks: $($c -join '; ') | adapters: $($a -join '; ')"`)
+	if err != nil {
+		return "unknown (" + err.Error() + ")"
+	}
+	return strings.TrimSpace(out)
+}
+
+// KillSwitchActive reports whether the kill switch is installed.
+func KillSwitchActive() bool { return wfp.Enabled() }
 
 func (windowsManager) RepairEndpoint(ctx context.Context, p Plan, j *undo.Journal) (bool, error) {
 	repaired := false
@@ -264,7 +302,7 @@ func EndpointPath(ctx context.Context, ep netip.Addr) string {
 
 // DisableKillSwitch removes the kill-switch rules now (the undo journal
 // still runs the same idempotent removal at teardown).
-func DisableKillSwitch(ctx context.Context) error {
-	_, err := osutil.PowerShell(ctx, RemoveFirewallGroupScript(fwGroup))
-	return err
+func DisableKillSwitch(context.Context) error {
+	wfp.Disable()
+	return nil
 }

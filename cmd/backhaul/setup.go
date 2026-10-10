@@ -38,6 +38,7 @@ type setupFlags struct {
 	force      bool
 	qr         bool
 	transport  string
+	cfToken    string
 }
 
 func setupCmd(g *globals) *cobra.Command {
@@ -75,7 +76,8 @@ On the client (Laptop 1):      backhaul setup --import <blob>   (or --import @pa
 	fl.BoolVarP(&f.yes, "yes", "y", false, "non-interactive: accept defaults, never prompt")
 	fl.BoolVar(&f.force, "force", false, "overwrite an existing config")
 	fl.BoolVar(&f.qr, "qr", false, "exit node: also print the pairing blob as a terminal QR code")
-	fl.StringVar(&f.transport, "transport", config.TransportWstunnel, `exit node: "wstunnel", or "reality" (VLESS+REALITY via Xray: impersonates www.amazon.com; best against China's firewall)`)
+	fl.StringVar(&f.transport, "transport", config.TransportWstunnel, `exit node: "wstunnel", "reality" (VLESS+REALITY: impersonates www.amazon.com) or "cloudflare" (through your domain on Cloudflare; most robust in China)`)
+	fl.StringVar(&f.cfToken, "cloudflare-token", "", "cloudflare transport: API token (Zone Read, DNS Edit, Zone Settings Edit); stored in secrets.toml")
 	return c
 }
 
@@ -236,10 +238,30 @@ func runSetup(ctx context.Context, g *globals, f *setupFlags, subnet6Set bool) e
 		}
 	}
 
-	res, err := app.SetupExitNode(p, app.ExitNodeOptions{
+	opts := app.ExitNodeOptions{
 		Endpoint: endpoint, Port: port, Subnet: subnet, Subnet6: subnet6,
 		ReachMode: reach, Relay: relay, DDNS: dd, DDNSToken: token, Transport: f.transport,
-	})
+	}
+	if f.transport == config.TransportCloudflare {
+		cfToken := f.cfToken
+		if cfToken == "" {
+			cfToken = pr.ask("Cloudflare API token (Zone Read, DNS Edit, Zone Settings Edit)", "")
+		}
+		if cfToken == "" {
+			return errors.New("--cloudflare-token is required for the cloudflare transport")
+		}
+		cf, err := app.PrepareCloudflare(ctx, cfToken, endpoint, config.Default().Health.IPCheckURL)
+		if err != nil {
+			return fmt.Errorf("Cloudflare: %w", err)
+		}
+		fmt.Printf("Cloudflare: %s → %s (proxied) in zone %s", endpoint, cf.PublicIP, cf.ZoneName)
+		if cf.SSLChanged {
+			fmt.Printf("; SSL/TLS mode changed from %q to \"full\"", cf.PrevSSL)
+		}
+		fmt.Println()
+		opts.CloudflareZoneID, opts.CloudflareToken = cf.ZoneID, cfToken
+	}
+	res, err := app.SetupExitNode(p, opts)
 	if err != nil {
 		return err
 	}

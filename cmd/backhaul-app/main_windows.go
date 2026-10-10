@@ -20,6 +20,7 @@ import (
 	"time"
 	"unsafe"
 
+	"fyne.io/systray"
 	webview2 "github.com/jchv/go-webview2"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -86,9 +87,9 @@ func main() {
 	}
 	// Repair anything left by a crash before the user starts again.
 	recoverCtx, cancelRecover := context.WithTimeout(context.Background(), app.TeardownTimeout)
-	for _, role := range []string{gui.RoleServe, gui.RoleConnect} {
-		if n, err := app.Recover(recoverCtx, config.Paths{Dir: backend.ProfileDir(role)}); n > 0 || err != nil {
-			slog.Info("restored network settings left by a previous run", "role", role, "steps", n, "err", err)
+	for _, dir := range backend.ProfileDirs() {
+		if n, err := app.Recover(recoverCtx, config.Paths{Dir: dir}); n > 0 || err != nil {
+			slog.Info("restored network settings left by a previous run", "profile", dir, "steps", n, "err", err)
 		}
 	}
 	cancelRecover()
@@ -106,7 +107,22 @@ func main() {
 	defer w.Destroy()
 	w.SetSize(1000, 780, webview2.HintNone)
 	w.SetSize(760, 640, webview2.HintMin)
-	applyTitleBarTheme(windows.HWND(uintptr(w.Window())))
+	hwnd := uintptr(w.Window())
+	applyTitleBarTheme(windows.HWND(hwnd))
+	closeToTray(hwnd)
+	runTray(w, backend)
+	if launchedByAutostart() {
+		procShowWindow.Call(hwnd, 0 /* SW_HIDE */) // start in the tray
+		if backend.State().Serve.Configured {
+			go func() {
+				if err := backend.Start(gui.RoleServe); err != nil {
+					slog.Error("could not start sharing automatically", "err", err)
+				}
+			}()
+		}
+	} else {
+		go refreshAutostart()
+	}
 
 	ui := &rpc{w: w, b: backend}
 	if err := w.Bind("__bh", ui.call); err != nil {
@@ -127,8 +143,9 @@ func main() {
 	slog.Info("Backhaul started", "config", base)
 	w.Run()
 
-	// Window closed: always put the network back before exiting.
-	backend.StopAndWait(app.TeardownTimeout + 5*time.Second)
+	// Quit chosen: always put the network back before exiting.
+	backend.StopAndWait(app.MaxShutdown)
+	systray.Quit()
 }
 
 type rpc struct {
@@ -220,7 +237,7 @@ func (r *rpc) dispatch(method string, a []json.RawMessage) (any, error) {
 	case "detectIP":
 		return r.b.DetectPublicIP()
 	case "setupServe":
-		return r.b.SetupServe(str(0), num(1), str(2))
+		return r.b.SetupServe(str(0), num(1), str(2), str(3))
 	case "getPairing":
 		return r.b.GetPairing()
 	case "importPairing":
@@ -233,6 +250,21 @@ func (r *rpc) dispatch(method string, a []json.RawMessage) (any, error) {
 		return nil, r.b.Start(str(0))
 	case "stop":
 		r.b.Stop()
+		return nil, nil
+	case "addNode":
+		return r.b.AddNode(str(0), str(1))
+	case "selectNode":
+		return nil, r.b.SelectNode(str(0))
+	case "renameNode":
+		return nil, r.b.RenameNode(str(0), str(1))
+	case "removeNode":
+		return nil, r.b.RemoveNode(str(0))
+	case "getAutostart":
+		return autostartEnabled()
+	case "setAutostart":
+		return nil, setAutostart(flag(0))
+	case "hide":
+		r.w.Dispatch(func() { procShowWindow.Call(uintptr(r.w.Window()), 0) })
 		return nil, nil
 	case "clearError":
 		r.b.ClearError()
@@ -314,8 +346,7 @@ func singleInstance() bool {
 	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 		title, _ := windows.UTF16PtrFromString(windowTitle)
 		if h, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(title))); h != 0 {
-			procShowWindow.Call(h, 9 /* SW_RESTORE */)
-			procSetForegroundWindow.Call(h)
+			showWindow(h) // also when it is hidden in the tray
 		}
 		return false
 	}

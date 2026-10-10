@@ -272,3 +272,7 @@ func DisableKillSwitch(ctx context.Context) error {
 	_, err := osutil.Run(ctx, "pfctl", "-a", pfAnchor, "-F", "all")
 	return err
 }
+
+// KillSwitchActive reports whether the kill switch is installed (Apply
+// fails rather than continuing without it here).
+func KillSwitchActive() bool { return true }

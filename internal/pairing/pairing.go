@@ -106,6 +106,11 @@ func (b *Blob) ClientConfig() (*config.Config, *config.Secrets) {
 	}
 	c.Transport.TLSSHA256 = b.TLSSHA256
 	c.Transport.PathPrefix = b.PathPrefix
+	if b.TransportKind == config.TransportCloudflare {
+		// The endpoint is the hostname on Cloudflare; the client verifies
+		// Cloudflare's real certificate instead of pinning one.
+		c.Transport.Kind = config.TransportCloudflare
+	}
 	if b.TransportKind == config.TransportReality {
 		c.Transport.Kind = config.TransportReality
 		c.Transport.Reality = config.Reality{ServerName: b.RealityServerName, Target: b.RealityTarget,

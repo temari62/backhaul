@@ -18,8 +18,11 @@ import (
 
 // Plan describes what connect mode wants installed.
 type Plan struct {
-	Iface        string       // tunnel interface (real OS name)
-	Endpoints    []netip.Addr // exit/relay IPs that must stay on the physical NIC
+	Iface     string       // tunnel interface (real OS name)
+	Endpoints []netip.Addr // exit/relay IPs that must stay on the physical NIC
+	// PermitApps (Windows) are programs besides Backhaul that the kill switch
+	// lets reach the exit node directly (Xray for REALITY).
+	PermitApps   []string
 	TunnelAddrs  []netip.Addr // this side's tunnel IPs (Windows kill-switch matches on source address)
 	EndpointPort int          // TCP port of the transport (443)
 	DNS          []netip.Addr // resolvers reached through the tunnel

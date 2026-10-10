@@ -83,9 +83,17 @@ header .sub { color: var(--muted); font-size: 12.5px; }
 .stat { font-size: 12.5px; color: var(--muted); }
 .stat b { display: block; color: var(--text); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
+/* Tabs */
+.tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 16px; border-radius: 12px; width: fit-content;
+  background: var(--card); border: 1px solid var(--card-border); box-shadow: var(--shadow); }
+.tab { display: flex; align-items: center; gap: 8px; background: transparent; color: var(--muted); font-weight: 600; padding: 8px 16px; }
+.tab small { font-weight: 400; font-size: 12px; opacity: .8; }
+.tab:hover { color: var(--text); }
+.tab.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.tab .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+
 /* Role cards */
-.cards { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-@media (max-width: 760px) { .cards { grid-template-columns: 1fr; } }
+.cards { display: block; }
 .card { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 20px; display: flex; flex-direction: column; gap: 14px; min-height: 290px; transition: border-color .2s, transform .2s; }
 .card.active { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
@@ -129,6 +137,27 @@ button:disabled { opacity: .45; cursor: default; transform: none; }
 .slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: .2s; }
 .switch input:checked + .slider { background: var(--accent); }
 .switch input:checked + .slider::before { transform: translateX(18px); }
+
+/* Exit-node list */
+.nodes { display: flex; flex-direction: column; gap: 8px; }
+.node { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 11px; cursor: pointer;
+  background: var(--field); border: 1px solid var(--field-border); transition: border-color .15s, background .15s; }
+.node:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--field-border)); }
+.node.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--field)); }
+.node.locked { cursor: default; }
+.node .radio { width: 16px; height: 16px; border-radius: 50%; flex: none; border: 2px solid var(--field-border); }
+.node.sel .radio { border: 5px solid var(--accent); }
+.node .info { flex: 1; min-width: 0; }
+.node .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node .meta { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node .meta code { font: 12px "Cascadia Mono", Consolas, monospace; }
+.node .live { font-size: 12px; font-weight: 600; color: var(--ok); }
+details.add { border-radius: 11px; border: 1px dashed var(--field-border); padding: 0 12px; }
+details.add[open] { padding-bottom: 12px; }
+details.add summary { cursor: pointer; padding: 10px 0; color: var(--accent); font-weight: 600; list-style: none; }
+details.add summary::-webkit-details-marker { display: none; }
+details.add .field { margin-bottom: 10px; }
+.foot { margin-top: 14px; text-align: center; font-size: 12px; color: var(--muted); }
 
 /* Log */
 details.log { margin-top: 18px; background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: var(--shadow); }
@@ -204,6 +233,11 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
     </div>
   </section>
 
+  <nav class="tabs" role="tablist">
+    <button class="tab" id="tabServe" role="tab" onclick="showTab('serve')"><span class="dot" id="dotServe" hidden></span>Share <small>exit node</small></button>
+    <button class="tab" id="tabConnect" role="tab" onclick="showTab('connect')"><span class="dot" id="dotConnect" hidden></span>Connect <small>client</small></button>
+  </nav>
+
   <div class="cards">
     <!-- SERVE -->
     <article class="card" id="cardServe">
@@ -212,20 +246,27 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
         <div><h3>Share</h3><p class="desc">Use this PC as the exit node. Your other PC's traffic leaves the internet from here.</p></div>
       </div>
       <div class="body" id="serveSetup" hidden>
-        <label class="field">This PC's public address (IP or DDNS hostname)
+        <label class="field">Disguise
+          <select id="srvTransport" onchange="updateSetupForm()">
+            <option value="cloudflare">Cloudflare: through your own domain (most robust in China)</option>
+            <option value="reality" selected>REALITY: looks like www.amazon.com</option>
+            <option value="wstunnel">WebSocket over TLS (simple; outside China)</option>
+          </select>
+        </label>
+        <label class="field"><span id="srvHostLabel">This PC's public address (IP or DDNS hostname)</span>
           <div class="row">
             <input id="srvHost" type="text" placeholder="e.g. myhome.duckdns.org" spellcheck="false">
             <button class="secondary" id="detectBtn" onclick="detectIP()" title="Detect my public IP">Detect</button>
           </div>
         </label>
+        <label class="field" id="cfTokenBox" hidden>Cloudflare API token
+          <input id="cfToken" type="password" placeholder="paste the token" spellcheck="false" autocomplete="off">
+          <span class="note">Cloudflare dashboard → My Profile → API Tokens → Create Token → Custom token with permissions
+            <b>Zone · Zone · Read</b>, <b>Zone · DNS · Edit</b>, <b>Zone · Zone Settings · Edit</b>, for your domain only. Backhaul creates the DNS
+            record and keeps it pointed at this PC.</span>
+        </label>
         <label class="field">Port (forward this TCP port on your router)
           <input id="srvPort" type="number" min="1" max="65535" value="443">
-        </label>
-        <label class="field">Disguise
-          <select id="srvTransport">
-            <option value="reality" selected>REALITY: looks like www.amazon.com (best for China)</option>
-            <option value="wstunnel">WebSocket over TLS (wstunnel)</option>
-          </select>
         </label>
         <button class="primary big" id="setupBtn" onclick="setupServe()">Set up exit node</button>
       </div>
@@ -233,6 +274,10 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
         <div class="kv">Address <code id="srvAddr"></code></div>
         <div class="kv">Pairing ID <code id="srvPid"></code> · Disguise <code id="srvTr"></code></div>
         <div class="note" id="srvRouter"></div>
+        <div class="toggle">
+          <div class="t">Start with Windows<small>When you sign in to Windows, Backhaul starts in the tray and starts sharing by itself</small></div>
+          <label class="switch"><input type="checkbox" id="autoToggle" onchange="setAuto(this.checked)"><span class="slider"></span></label>
+        </div>
         <div class="links">
           <button class="ghost" onclick="showPairing()">Show pairing code</button>
           <button class="ghost" onclick="confirmReset('serve')">Reset…</button>
@@ -247,21 +292,26 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
         <div><h3>Connect</h3><p class="desc">Send all of this PC's traffic through your exit node, encrypted.</p></div>
       </div>
-      <div class="body" id="connectSetup" hidden>
-        <label class="field">Pairing code from your exit node
-          <textarea id="pairCode" spellcheck="false" placeholder="Paste the pairing code here"></textarea>
-        </label>
-        <button class="primary big" id="importBtn" onclick="importCode()">Save pairing</button>
-      </div>
-      <div class="body" id="connectReady" hidden>
-        <div class="kv">Exit node <code id="cliAddr"></code> · Disguise <code id="cliTr"></code></div>
-        <div class="kv">Pairing ID <code id="cliPid"></code> <span class="note">— must match the exit node</span></div>
-        <div class="toggle">
-          <div class="t">Kill switch<small>Block all traffic if the tunnel drops</small></div>
-          <label class="switch"><input type="checkbox" id="ksToggle" onchange="setKS(this.checked)"><span class="slider"></span></label>
+      <div class="body">
+        <div class="nodes" id="nodeList"></div>
+        <div class="note" id="noNodes" hidden>No exit nodes yet. Paste the pairing code from your exit node below.</div>
+        <div id="connectReady" class="body" style="gap:10px">
+          <div class="toggle">
+            <div class="t">Kill switch<small>Block traffic outside the tunnel while connected</small></div>
+            <label class="switch"><input type="checkbox" id="ksToggle" onchange="setKS(this.checked)"><span class="slider"></span></label>
+          </div>
+          <button class="primary big" id="connectBtn" onclick="toggle('connect')">Connect</button>
         </div>
-        <div class="links"><button class="ghost" onclick="confirmReset('connect')">Reset…</button></div>
-        <button class="primary big" id="connectBtn" onclick="toggle('connect')">Connect</button>
+        <details class="add" id="addBox">
+          <summary>+ Add an exit node</summary>
+          <label class="field">Name (optional)
+            <input id="nodeName" type="text" placeholder="e.g. Home, Office" spellcheck="false" maxlength="60">
+          </label>
+          <label class="field">Pairing code from the exit node
+            <textarea id="pairCode" spellcheck="false" placeholder="Paste the pairing code here"></textarea>
+          </label>
+          <button class="primary" id="importBtn" onclick="importCode()">Save exit node</button>
+        </details>
       </div>
     </article>
   </div>
@@ -270,7 +320,19 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
     <summary><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 6l6 6-6 6"/></svg>Activity</summary>
     <pre id="log"></pre>
   </details>
+  <div class="foot">Closing this window keeps Backhaul running in the tray (bottom-right of the taskbar). To exit, right-click the tray icon → Quit.</div>
 </div>
+
+<dialog id="renameDlg">
+  <div class="dlg">
+    <h3>Rename exit node</h3>
+    <input id="renameInput" type="text" maxlength="60" spellcheck="false">
+    <div class="actions">
+      <button class="secondary" onclick="renameDlg.close()">Cancel</button>
+      <button class="primary" id="renameOk">Save</button>
+    </div>
+  </div>
+</dialog>
 
 <dialog id="pairDlg">
   <div class="dlg">
@@ -356,8 +418,7 @@ function render(s) {
     : 'Your router must forward TCP ' + port + ' to this PC' + lan + '. Backhaul tries to set this up automatically (UPnP) when you start sharing.';
   $('srvRouter').className = 'note' + (/carrier-grade|didn.t work/.test(s.router || '') && s.running === 'serve' ? ' warnbox' : '');
   $('srvPid').textContent = s.serve.pairingId || '–';
-  const trName = (t) => t === 'reality' ? 'REALITY' : 'wstunnel';
-  $('srvTr').textContent = trName(s.serve.transport); $('cliTr').textContent = trName(s.connect.transport);
+  $('srvTr').textContent = trName(s.serve.transport);
   $('cardServe').classList.toggle('active', s.running === 'serve');
   const sb = $('serveBtn');
   if (!busy.serveBtn) {
@@ -366,10 +427,13 @@ function render(s) {
     sb.disabled = (s.running && s.running !== 'serve') || s.phase === 'stopping';
   }
 
-  // Connect card
-  $('connectSetup').hidden = s.connect.configured; $('connectReady').hidden = !s.connect.configured;
-  $('cliAddr').textContent = s.connect.endpoint ? s.connect.endpoint + ':' + s.connect.port : '';
-  $('cliPid').textContent = s.connect.pairingId || '–';
+  // Tabs
+  if (!tab) showTab(localStorage.getItem('tab') || (s.running || (s.serve.configured && !s.nodes.length) ? (s.running || 'serve') : 'connect'));
+  $('dotServe').hidden = s.running !== 'serve'; $('dotConnect').hidden = s.running !== 'connect';
+
+  // Connect card: the exit-node list
+  renderNodes(s);
+  $('connectReady').hidden = !s.connect.configured;
   $('ksToggle').checked = s.connect.killswitch; $('ksToggle').disabled = !!s.running;
   $('cardConnect').classList.toggle('active', s.running === 'connect');
   const cb = $('connectBtn');
@@ -379,6 +443,71 @@ function render(s) {
     cb.disabled = (s.running && s.running !== 'connect') || s.phase === 'stopping';
   }
   for (const e of [s.serve, s.connect]) if (e.configError) showError('Config problem: ' + e.configError);
+}
+
+let tab = '';
+function showTab(t) {
+  tab = t === 'serve' ? 'serve' : 'connect';
+  try { localStorage.setItem('tab', tab); } catch (e) {}
+  $('tabServe').classList.toggle('on', tab === 'serve'); $('tabConnect').classList.toggle('on', tab === 'connect');
+  $('cardServe').hidden = tab !== 'serve'; $('cardConnect').hidden = tab !== 'connect';
+}
+
+const trName = (t) => ({ reality: 'REALITY', cloudflare: 'Cloudflare' })[t] || 'wstunnel';
+let nodesKey = '';
+function renderNodes(s) {
+  const connecting = s.running === 'connect';
+  const key = JSON.stringify([s.nodes, connecting, s.phase === 'up']);
+  if (key === nodesKey) return;
+  nodesKey = key;
+  const list = $('nodeList'); list.textContent = '';
+  for (const n of s.nodes) {
+    const row = document.createElement('div');
+    row.className = 'node' + (n.selected ? ' sel' : '') + (connecting ? ' locked' : '');
+    row.title = connecting ? '' : 'Use this exit node';
+    row.onclick = () => { if (!connecting && !n.selected) pickNode(n.id); };
+    const radio = document.createElement('div'); radio.className = 'radio';
+    const info = document.createElement('div'); info.className = 'info';
+    const name = document.createElement('div'); name.className = 'name'; name.textContent = n.name || n.endpoint;
+    const meta = document.createElement('div'); meta.className = 'meta';
+    meta.textContent = n.configError ? 'Problem: ' + n.configError
+      : (n.endpoint + ':' + n.port + ' · ' + trName(n.transport) + (n.pairingId ? ' · ID ' + n.pairingId : ''));
+    info.append(name, meta);
+    row.append(radio, info);
+    if (connecting && n.selected) {
+      const live = document.createElement('span'); live.className = 'live';
+      live.textContent = s.phase === 'up' ? 'Connected' : 'Connecting…'; row.append(live);
+    }
+    const ren = document.createElement('button'); ren.className = 'ghost'; ren.textContent = 'Rename';
+    ren.onclick = (e) => { e.stopPropagation(); renameNode(n); };
+    const del = document.createElement('button'); del.className = 'ghost'; del.textContent = 'Remove';
+    del.disabled = connecting && n.selected;
+    del.onclick = (e) => { e.stopPropagation(); confirmRemove(n); };
+    row.append(ren, del);
+    list.append(row);
+  }
+  $('noNodes').hidden = s.nodes.length > 0;
+  if (!s.nodes.length) $('addBox').open = true;
+}
+async function pickNode(id) { try { await call('selectNode', id); } catch (e) {} nodesKey = ''; refresh(); }
+function renameNode(n) {
+  $('renameInput').value = n.name || '';
+  $('renameOk').onclick = async () => { try { await call('renameNode', n.id, $('renameInput').value); renameDlg.close(); nodesKey = ''; refresh(); } catch (e) {} };
+  $('renameDlg').showModal(); $('renameInput').select();
+}
+function confirmRemove(n) {
+  $('confirmTitle').textContent = 'Remove "' + (n.name || n.endpoint) + '"?';
+  $('confirmText').textContent = 'This forgets this exit node and its keys. You will need its pairing code to add it again.';
+  $('confirmOk').textContent = 'Remove';
+  $('confirmOk').onclick = async () => { $('confirmDlg').close(); try { await call('removeNode', n.id); toast('Removed'); } catch (e) {} nodesKey = ''; refresh(); };
+  $('confirmDlg').showModal();
+}
+async function loadAuto() { try { $('autoToggle').checked = await bh('getAutostart'); } catch (e) {} }
+async function setAuto(on) {
+  $('autoToggle').disabled = true;
+  try { await call('setAutostart', on); toast(on ? 'Backhaul will start with Windows and share automatically' : 'Backhaul won’t start with Windows'); }
+  catch (e) { $('autoToggle').checked = !on; }
+  $('autoToggle').disabled = false;
 }
 
 async function refresh() {
@@ -397,13 +526,21 @@ async function refresh() {
   } catch (e) {}
 }
 
+function updateSetupForm() {
+  const cf = $('srvTransport').value === 'cloudflare';
+  $('srvHostLabel').textContent = cf ? 'Your hostname on Cloudflare (e.g. vpn.yourdomain.com)' : "This PC's public address (IP or DDNS hostname)";
+  $('srvHost').placeholder = cf ? 'vpn.yourdomain.com' : 'e.g. myhome.duckdns.org';
+  $('detectBtn').hidden = cf;
+  $('cfTokenBox').hidden = !cf;
+  if (cf) $('srvPort').value = '443';
+}
 async function detectIP() {
   setBusy('detectBtn', true, '');
   try { $('srvHost').value = await call('detectIP'); } catch (e) {} finally { setBusy('detectBtn', false); }
 }
 async function setupServe() {
   setBusy('setupBtn', true, 'Creating keys…');
-  try { const p = await call('setupServe', $('srvHost').value, parseInt($('srvPort').value, 10), $('srvTransport').value); await refresh(); openPairing(p); }
+  try { const p = await call('setupServe', $('srvHost').value, parseInt($('srvPort').value, 10), $('srvTransport').value, $('cfToken').value); $('cfToken').value = ''; await refresh(); openPairing(p); }
   catch (e) {} finally { setBusy('setupBtn', false); }
 }
 async function showPairing() { try { openPairing(await call('getPairing')); } catch (e) {} }
@@ -411,7 +548,7 @@ function openPairing(p) { $('pairText').value = p.code; $('pairQR').src = p.qr |
 function copyPairing() { const t = $('pairText'); t.removeAttribute('readonly'); t.select(); document.execCommand('copy'); t.setAttribute('readonly', ''); t.setSelectionRange(0, 0); toast('Pairing code copied'); }
 async function importCode() {
   setBusy('importBtn', true, 'Saving…');
-  try { await call('importPairing', $('pairCode').value); $('pairCode').value = ''; toast('Paired with your exit node'); await refresh(); }
+  try { await call('addNode', $('pairCode').value, $('nodeName').value); $('pairCode').value = ''; $('nodeName').value = ''; $('addBox').open = false; toast('Exit node saved'); nodesKey = ''; await refresh(); }
   catch (e) {} finally { setBusy('importBtn', false); }
 }
 async function setKS(on) { try { await call('setKillSwitch', on); toast(on ? 'Kill switch on' : 'Kill switch off'); } catch (e) {} refresh(); }
@@ -428,12 +565,13 @@ function confirmReset(role) {
   $('confirmText').textContent = role === 'serve'
     ? 'This deletes the exit node keys and certificate. Your other PC will need a new pairing code.'
     : 'This removes the pairing. You will need a new pairing code to connect again.';
+  $('confirmOk').textContent = 'Reset';
   $('confirmOk').onclick = async () => { $('confirmDlg').close(); try { await call('reset', role); toast('Reset'); } catch (e) {} refresh(); };
   $('confirmDlg').showModal();
 }
 
 document.addEventListener('contextmenu', (e) => { if (!e.target.closest('textarea, input, pre, code')) e.preventDefault(); });
-refresh(); setInterval(refresh, 1000);
+refresh(); setInterval(refresh, 1000); loadAuto();
 </script>
 </body>
 </html>

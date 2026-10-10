@@ -47,10 +47,12 @@ and the firewall. If you run them without it, backhaul prints the exact command 
 
 ## Windows app (all-in-one)
 
-`Backhaul.exe` is a single file. It has a modern interface and two buttons:
+`Backhaul.exe` is a single file. It has a modern interface with two tabs:
 
 - **Share**: use this PC as the exit node.
-- **Connect**: send this PC's traffic through your exit node.
+- **Connect**: send this PC's traffic through one of your exit nodes. Every pairing code you save
+  is added to a list. Click an exit node to choose it, then click **Connect**. You can rename or
+  remove entries. Saving a new code for an exit node that's already in the list updates it.
 
 wstunnel and the Wintun driver are built in, so there's nothing else to install.
 
@@ -65,11 +67,20 @@ wstunnel and the Wintun driver are built in, so there's nothing else to install.
 Other things to know:
 - **Admin prompt.** Backhaul asks for administrator rights once when it starts (UAC), because
   connecting changes routes, DNS and the firewall.
-- **Closing the window.** If a tunnel is running, closing the window stops it and restores your
-  network first.
-- **Two profiles.** One PC can hold both roles: exit node and client profiles are stored
-  separately under `%USERPROFILE%\.config\backhaul`. An exit-node or client config created
-  earlier with the CLI is picked up automatically.
+- **Closing the window.** Backhaul keeps running in the tray, still sharing or connected.
+  - Click the tray icon to open the window again.
+  - Right-click it → **Quit** to stop, restore your network and exit.
+  - The icon's colour shows the status.
+- **Start with Windows** (Share tab). Backhaul starts in the tray when you sign in and starts
+  sharing by itself.
+  - It's a scheduled task named "Backhaul" that runs with administrator rights, so there's no
+    permission prompt at every sign-in.
+  - It starts at **sign-in**. For an exit node that should come back after a restart without
+    anyone signing in, turn on automatic sign-in for that PC: run `netplwiz`, then clear "Users
+    must enter a user name and password".
+- **Profiles.** One PC can hold both roles. The exit node profile and each saved exit node (in
+  `nodes\`) are stored under `%USERPROFILE%\.config\backhaul`. An exit-node or client config
+  created earlier with the CLI is picked up automatically.
 - **App files.** Logs, the unpacked components and WebView2 data live in
   `%LOCALAPPDATA%\Backhaul`.
 - **Requirements.** The Microsoft Edge **WebView2 Runtime**, which is built into Windows 11 and
@@ -222,12 +233,32 @@ Linux. On macOS, build it on a Mac with `make tray`, because the macOS tray need
 | Full tunnel | `0.0.0.0/1` + `128.0.0.0/1` (and `::/1` + `8000::/1`) via the tunnel. The existing default route is left in place. | same, via `route` | same, via `netsh` |
 | Routing loop | `/32` host route to the exit endpoint via the original gateway | same | same (`Find-NetRoute`) |
 | DNS | `resolvectl` (`~.` routing domain), or a rewritten `/etc/resolv.conf` (backed up) | `networksetup -setdnsservers` on every service | NRPT rule for `.` plus the adapter's DNS server |
-| Kill-switch | nftables `inet backhaul_ks` output policy drop (iptables fallback) | pf anchor `com.apple/250.backhaul` | Windows Firewall block rules on every non-tunnel adapter, except the endpoint |
+| Kill-switch | nftables `inet backhaul_ks` output policy drop (iptables fallback) | pf anchor `com.apple/250.backhaul` | Windows Filtering Platform filters in a dynamic session (adapted from WireGuard for Windows): removed automatically when Backhaul exits |
 | IPv6 | **Tunnelled** (`::/0`). If that fails, IPv6 is **disabled for the session** with a warning. | same (`networksetup -setv6off`) | same (`ms_tcpip6` unbound) |
 
 The kill-switch only allows traffic on the tunnel interface, loopback, the single
 `endpoint:443` TCP connection, and DHCP/neighbour discovery so the physical link keeps working.
 It stays engaged during reconnects.
+
+**On Windows**, "the single endpoint connection" means Backhaul's own program (and Xray for
+REALITY), so every Cloudflare address in the pool is allowed. The local network (router,
+printers) and Windows' connectivity check (the Network Location Awareness service) are also
+allowed. Blocking that check makes Windows mark the real adapter "No Internet".
+
+If the exit node stops answering while the kill switch is on, Backhaul lifts the kill switch and
+tries again. If the exit node then answers, the kill switch stays off for that session and the
+log explains why.
+
+An earlier version used Windows Firewall rules. On some PCs they began blocking the exit node about
+a minute after connecting, which looked like a drop every minute. The filters now live in a
+*dynamic* WFP session, so Windows deletes them by itself if Backhaul exits or crashes.
+
+After connecting, two self-tests check the kill switch:
+- the exit node must still be reachable;
+- another program's DNS lookup through the tunnel must work.
+
+If either fails, or the filters can't be installed, the kill switch is turned off for that
+session, and the log says so.
 
 **IPv6 decision:** backhaul tunnels IPv6 by default and NATs it out of the exit node (nftables/pf).
 If the exit node has no IPv6, client IPv6 traffic simply dies in the tunnel, which is safe. Set
@@ -235,10 +266,74 @@ If the exit node has no IPv6, client IPv6 traffic simply dies in the tunnel, whi
 
 ---
 
-## Disguise (transport): wstunnel or REALITY
+## Disguise (transport): Cloudflare, REALITY or wstunnel
 
-Two disguises are available. You choose one when you set up the exit node, and the pairing code
-carries it to the client.
+Three disguises are available. You choose one when you set up the exit node, and the pairing code
+carries it to the client. You can switch at any time by setting the exit node up again.
+
+### Cloudflare (most robust in China)
+
+The client connects to **Cloudflare's** addresses using your own hostname (for example
+`vpn.yourdomain.com`). Cloudflare then forwards the traffic to your exit node.
+
+- **Why it's hard to block:** a censor sees an ordinary HTTPS visit to a site on Cloudflare. It
+  can't block Cloudflare's addresses without breaking a large part of the web.
+- **Why your home IP is safe:** that IP is never contacted by the client directly, so it can't be
+  blocked the way REALITY and wstunnel connections to it were.
+
+**One-time setup, with a domain registered at Namecheap:**
+
+1. Create a free account at <https://dash.cloudflare.com>, click **Add a site**, enter your domain
+   and pick the **Free** plan. Cloudflare shows two **nameservers**.
+2. At Namecheap, go to **Domain List → Manage → Nameservers**, choose **Custom DNS**, enter the two
+   Cloudflare nameservers, and save. Wait until Cloudflare marks the site **Active**. This usually
+   takes minutes, but can take a few hours.
+3. In Cloudflare, go to **My Profile → API Tokens → Create Token → Custom token** and grant:
+   - **Zone · Zone · Read**
+   - **Zone · DNS · Edit**
+   - **Zone · Zone Settings · Edit**
+
+   Under *Zone Resources*, choose *Include → Specific zone → your domain*. Copy the token.
+4. **Exit node:** Share → Reset…, choose **Disguise: Cloudflare**, enter a hostname such as
+   `vpn.yourdomain.com`, paste the token, keep port **443**, and click **Set up exit node**.
+   Backhaul then:
+   - creates the DNS record, proxied (orange cloud) and pointed at your home IP, and keeps it
+     updated if that IP changes;
+   - sets the zone's **SSL/TLS** mode to **Full** if needed, so Cloudflare accepts the exit node's
+     own certificate.
+5. Click **Start sharing**. The router must still forward TCP 443 to the exit node (UPnP usually
+   does this automatically), because Cloudflare connects to it there.
+6. **Client:** Connect → Reset…, paste the new pairing code, then click **Connect**.
+
+**Troubleshooting:** `doctor` on the client checks Cloudflare's certificate, then asks Cloudflare
+to reach the exit node:
+- **522 / 521:** Cloudflare can't reach the exit node. Check it's Sharing and port 443 is
+  forwarded.
+- **525 / 526:** wrong SSL mode.
+
+**Automatic address switching:** China's firewall sometimes blocks the Cloudflare address in use,
+for this client only, for a few minutes. The client therefore keeps a pool of about 14 Cloudflare
+addresses:
+- your hostname's own addresses;
+- other addresses in the same blocks;
+- addresses from Cloudflare's other ranges.
+
+When a connection is cut or an address stops answering, it moves to the next address within
+seconds. The log shows this as "switching to another Cloudflare address". Every address must
+present a valid certificate for your hostname, so a wrong one is simply skipped.
+
+Traffic to these few addresses goes outside the tunnel. A website that happens to use one of them
+is reached directly, not through your home connection.
+
+To use only addresses you choose, set `transport.edge_ips = ["104.16.1.2", "172.64.3.4"]` (or the
+single `transport.edge_ip`) on the client.
+
+**Hostname tip:** the hostname is visible to the network (as the TLS server name), so choose a dull
+one such as `cdn.` or `static.` rather than `vpn.`.
+
+Cloudflare's free plan is fine for personal use. Speed from China varies by time of day.
+
+### REALITY and wstunnel
 
 | Disguise | What a censor sees | Use when |
 |---|---|---|

@@ -115,8 +115,23 @@ func Validate(c *Config, s *Secrets) error {
 				add("secrets: reality_private_key is not a valid REALITY key")
 			}
 		}
+	case TransportCloudflare:
+		if !CloudflarePorts[c.Transport.Port] {
+			add("transport.port %d is not one Cloudflare proxies for HTTPS (use 443, 2053, 2083, 2087, 2096 or 8443)", c.Transport.Port)
+		}
+		if _, err := netip.ParseAddr(c.Transport.Endpoint); err == nil || c.Transport.Endpoint == "" {
+			add("transport.endpoint must be your hostname on Cloudflare (e.g. vpn.example.com), not an IP")
+		}
+		for _, e := range c.Transport.PinnedEdges() {
+			if _, err := netip.ParseAddr(e); err != nil {
+				add("transport.edge_ip(s): %v", err)
+			}
+		}
+		if c.Reachability.Mode == ReachRelay {
+			add("transport.kind %q does not use relay mode", TransportCloudflare)
+		}
 	default:
-		add("transport.kind must be %q or %q", TransportWstunnel, TransportReality)
+		add("transport.kind must be %q, %q or %q", TransportWstunnel, TransportReality, TransportCloudflare)
 	}
 	if c.Transport.PathPrefix != "" && !regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(c.Transport.PathPrefix) {
 		add("transport.path_prefix may only contain [A-Za-z0-9_-]")
@@ -161,7 +176,7 @@ func Validate(c *Config, s *Secrets) error {
 			if c.Transport.Endpoint == "" {
 				add("transport.endpoint is required in connect mode")
 			}
-			if c.Transport.Kind != TransportReality && !ValidFingerprint(c.Transport.TLSSHA256) {
+			if c.Transport.Kind == TransportWstunnel && !ValidFingerprint(c.Transport.TLSSHA256) {
 				add("transport.tls_sha256 must be a pinned SHA-256 fingerprint (AB:CD:...)")
 			}
 		} else if c.Reachability.Mode == ReachRelay && !ValidFingerprint(c.Reachability.Relay.TLSSHA256) {
@@ -239,3 +254,6 @@ func validRealityKey(k string) bool {
 	b, err := base64.RawURLEncoding.DecodeString(k)
 	return err == nil && len(b) == 32
 }
+
+// CloudflarePorts are the HTTPS ports Cloudflare's proxy forwards.
+var CloudflarePorts = map[int]bool{443: true, 2053: true, 2083: true, 2087: true, 2096: true, 8443: true}

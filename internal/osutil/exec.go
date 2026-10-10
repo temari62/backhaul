@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Runner executes external commands. It is an interface so platform code can
@@ -33,6 +34,10 @@ func (Exec) RunStdin(ctx context.Context, stdin string, name string, args ...str
 
 func run(ctx context.Context, stdin, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	// Once ctx ends and the process is killed, stop waiting for its output
+	// pipes: a grandchild (e.g. a WMI/CIM helper behind a PowerShell cmdlet)
+	// can hold them open forever and would otherwise block Run indefinitely.
+	cmd.WaitDelay = 3 * time.Second
 	HideWindow(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)

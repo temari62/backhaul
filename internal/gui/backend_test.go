@@ -18,10 +18,10 @@ func TestSetupPairImportResetFlow(t *testing.T) {
 	if v.Serve.Configured || v.Connect.Configured || v.Phase != "idle" {
 		t.Fatalf("fresh state: %+v", v)
 	}
-	if _, err := b.SetupServe("", 443, ""); err == nil {
+	if _, err := b.SetupServe("", 443, "", ""); err == nil {
 		t.Fatal("empty endpoint accepted")
 	}
-	p, err := b.SetupServe("203.0.113.5", 443, "")
+	p, err := b.SetupServe("203.0.113.5", 443, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +76,8 @@ func TestAdoptsCLIProfileInBaseDir(t *testing.T) {
 	if b.ProfileDir(RoleServe) != base {
 		t.Fatal("CLI exit-node profile not adopted")
 	}
-	if b.ProfileDir(RoleConnect) != filepath.Join(base, RoleConnect) {
-		t.Fatal("client profile should live in its own subdir")
+	if d := b.ProfileDir(RoleConnect); d == base || !strings.HasPrefix(d, filepath.Join(base, "nodes")) {
+		t.Fatalf("client profiles should live under nodes/, got %s", d)
 	}
 	if !b.State().Serve.Configured {
 		t.Fatal("adopted profile not reported")

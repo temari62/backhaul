@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"runtime"
 	"strconv"
@@ -149,8 +150,11 @@ func (d *Doctor) endpointReachable(ctx context.Context) []Result {
 	timeout := d.Cfg.Transport.DialTimeout.Duration
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ips, err := net.DefaultResolver.LookupHost(rctx, host)
-	if err != nil {
+	var ips []string
+	var err error
+	if e := d.Cfg.Transport.EdgeIP; e != "" && d.Cfg.Transport.Kind == config.TransportCloudflare {
+		ips = []string{e} // pinned Cloudflare edge address
+	} else if ips, err = net.DefaultResolver.LookupHost(rctx, host); err != nil {
 		return []Result{{Name: CheckEndpointDNS, Status: Fail, Detail: fmt.Sprintf("cannot resolve %s: %v", host, err),
 			Remedy: "check transport.endpoint and that your DDNS updater is running on the exit node"}}
 	}
@@ -164,8 +168,11 @@ func (d *Doctor) endpointReachable(ctx context.Context) []Result {
 	}
 	c.Close()
 	rs = append(rs, Result{Name: CheckEndpointTCP, Status: Pass, Detail: addr})
-	if d.Cfg.Transport.Kind == config.TransportReality {
+	switch d.Cfg.Transport.Kind {
+	case config.TransportReality:
 		return append(rs, d.realityCamouflage(rctx, addr))
+	case config.TransportCloudflare:
+		return append(rs, d.cloudflareChecks(rctx, addr)...)
 	}
 	got, err := tlspin.Probe(rctx, addr, host)
 	switch {
@@ -196,6 +203,10 @@ func (d *Doctor) ddnsPointsHere(ctx context.Context) Result {
 	host := d.Cfg.Transport.Endpoint
 	if d.Cfg.Reachability.Mode != config.ReachPortForward || host == "" {
 		return Result{Name: "DDNS / endpoint points here", Status: Skip, Detail: "not in port-forward mode"}
+	}
+	if d.Cfg.Transport.Kind == config.TransportCloudflare {
+		// A proxied record resolves to Cloudflare, not to this PC, by design.
+		return Result{Name: "DDNS / endpoint points here", Status: Skip, Detail: "Cloudflare mode: the hostname resolves to Cloudflare"}
 	}
 	if _, err := netip.ParseAddr(host); err == nil {
 		return Result{Name: "DDNS / endpoint points here", Status: Skip, Detail: "endpoint is a literal IP"}
@@ -332,4 +343,67 @@ func (d *Doctor) realityCamouflage(ctx context.Context, addr string) Result {
 	}
 	c.Close()
 	return Result{Name: CheckRealityCamouflage, Status: Pass, Detail: "exit node presents a valid certificate for " + sni}
+}
+
+// Checks for the Cloudflare transport.
+const (
+	CheckCloudflareTLS    = "Cloudflare certificate"
+	CheckCloudflareOrigin = "Cloudflare → exit node"
+)
+
+// cloudflareChecks verifies, through Cloudflare, that (1) the hostname is
+// served by a valid certificate and (2) Cloudflare can reach the exit node.
+// wstunnel answers a plain HTTPS request with 400; Cloudflare reports its
+// own trouble reaching the origin with 52x codes.
+func (d *Doctor) cloudflareChecks(ctx context.Context, addr string) []Result {
+	host := d.Cfg.Transport.Endpoint
+	cert := d.validCert(ctx, CheckCloudflareTLS, addr, host)
+	if cert.Status != Pass {
+		cert.Remedy = "make sure the DNS record for " + host + " exists and is proxied (orange cloud) in Cloudflare"
+		return []Result{cert}
+	}
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: d.Cfg.Transport.DialTimeout.Duration}).DialContext(ctx, network, addr)
+		},
+		TLSClientConfig: &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12},
+	}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr, Timeout: d.Cfg.Health.ProbeTimeout.Duration}
+	resp, err := client.Get("https://" + host + "/")
+	if err != nil {
+		return []Result{cert, {Name: CheckCloudflareOrigin, Status: Fail, Detail: err.Error()}}
+	}
+	resp.Body.Close()
+	return []Result{cert, cloudflareOriginResult(resp.StatusCode)}
+}
+
+// cloudflareOriginResult interprets the status Cloudflare returned.
+func cloudflareOriginResult(code int) Result {
+	r := Result{Name: CheckCloudflareOrigin, Detail: fmt.Sprintf("HTTP %d", code)}
+	switch code {
+	case 521, 522, 523:
+		r.Status, r.Remedy = Fail, "Cloudflare cannot reach your exit node: make sure it is Sharing, and that the router forwards TCP 443 to it"
+	case 524:
+		r.Status, r.Remedy = Fail, "the exit node accepted the connection but did not answer in time"
+	case 525, 526:
+		r.Status, r.Remedy = Fail, "Cloudflare's SSL/TLS mode must be \"Full\" (not Flexible or Full strict); set the exit node up again with your API token, or change it in the Cloudflare dashboard"
+	case 520, 527:
+		r.Status, r.Remedy = Fail, "Cloudflare got an unexpected answer from the exit node"
+	default:
+		r.Status, r.Detail = Pass, fmt.Sprintf("Cloudflare reaches the exit node (HTTP %d)", code)
+	}
+	return r
+}
+
+// validCert passes when addr presents a certificate valid for sni.
+func (d *Doctor) validCert(ctx context.Context, name, addr, sni string) Result {
+	dl := tls.Dialer{NetDialer: &net.Dialer{Timeout: d.Cfg.Transport.DialTimeout.Duration},
+		Config: &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12}}
+	c, err := dl.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return Result{Name: name, Status: Fail, Detail: err.Error()}
+	}
+	c.Close()
+	return Result{Name: name, Status: Pass, Detail: "valid certificate for " + sni}
 }

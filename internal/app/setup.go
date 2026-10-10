@@ -26,6 +26,9 @@ type ExitNodeOptions struct {
 	Transport string
 	// RealityServerName/Target override the impersonated site (REALITY only).
 	RealityServerName, RealityTarget string
+	// Cloudflare transport: the zone holding Endpoint (a hostname) and the
+	// API token used to keep its proxied DNS record pointed at this PC.
+	CloudflareZoneID, CloudflareToken string
 }
 
 // SetupResult is what the exit-node setup produced.
@@ -118,6 +121,9 @@ func SetupExitNode(p config.Paths, o ExitNodeOptions) (*SetupResult, error) {
 	if o.ReachMode == config.ReachRelay {
 		b.RelayHost, b.RelayPort, b.RelayRemotePort, b.RelayTLSSHA256 = o.Relay.Host, o.Relay.Port, o.Relay.RemotePort, o.Relay.TLSSHA256
 	}
+	if o.Transport == config.TransportCloudflare {
+		setupCloudflare(c, sec, b, o)
+	}
 	if o.Transport == config.TransportReality {
 		if err := setupReality(c, sec, b, o); err != nil {
 			return nil, err
@@ -194,4 +200,17 @@ func setupReality(c *config.Config, sec *config.Secrets, b *pairing.Blob, o Exit
 	b.RealityServerName, b.RealityTarget, b.RealityFingerprint = r.ServerName, r.Target, r.Fingerprint
 	b.RealityPublicKey, b.RealityShortID, b.RealityUUID = kp.Public, sid, uuid
 	return nil
+}
+
+// setupCloudflare configures the exit node for the Cloudflare transport:
+// wstunnel behind Cloudflare, with the DNS record kept proxied and pointed
+// at this PC by the Cloudflare DDNS updater.
+func setupCloudflare(c *config.Config, sec *config.Secrets, b *pairing.Blob, o ExitNodeOptions) {
+	c.Transport.Kind = config.TransportCloudflare
+	b.TransportKind = config.TransportCloudflare
+	if o.CloudflareToken != "" {
+		c.DDNS = config.DDNS{Provider: "cloudflare", Domain: o.Endpoint, ZoneID: o.CloudflareZoneID,
+			Proxied: true, Interval: config.Default().DDNS.Interval}
+		sec.DDNSToken = o.CloudflareToken
+	}
 }

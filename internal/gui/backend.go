@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,8 @@ type Backend struct {
 	Logs    *LogBuffer                 //
 	Prepare func(*config.Config) error // e.g. point at bundled wstunnel
 	Verbose bool
+	// IPCheckURL overrides the public-IP service (tests).
+	IPCheckURL string
 
 	mu       sync.Mutex
 	running  string // role currently running ("" = none)
@@ -48,12 +51,17 @@ type Backend struct {
 	lastErr  string
 	egress   string
 	egressAt time.Time
+
+	migrateOnce sync.Once
 }
 
 // ProfileDir returns the config dir for a role. A config made by the CLI in
 // the base dir is adopted for its own mode; otherwise each role gets its own
 // subdirectory, so one PC can hold both an exit-node and a client profile.
 func (b *Backend) ProfileDir(role string) string {
+	if role == RoleConnect {
+		return b.connectDir() // the selected exit node
+	}
 	if c, err := readMode(b.Base); err == nil && c == role {
 		return b.Base
 	}
@@ -101,6 +109,7 @@ type View struct {
 	NAT       string   `json:"nat,omitempty"`
 	Uptime    string   `json:"uptime,omitempty"`
 	Router    string   `json:"router,omitempty"` // exit node: port-forward status
+	Nodes     []Node   `json:"nodes"`            // saved exit nodes (Connect list)
 }
 
 func (b *Backend) roleView(role string) RoleView {
@@ -119,11 +128,7 @@ func (b *Backend) roleView(role string) RoleView {
 	v.Transport = cfg.Transport.Kind
 	host, port, _ := cfg.RemoteHost()
 	v.Endpoint, v.Port, v.KillSwitch = host, port, cfg.Client.KillSwitch
-	if cfg.Transport.Kind == config.TransportReality && len(cfg.Transport.Reality.PublicKey) >= 11 {
-		v.PairingID = cfg.Transport.Reality.PublicKey[:11]
-	} else if fp := cfg.Transport.TLSSHA256; len(fp) >= 11 {
-		v.PairingID = fp[:11]
-	}
+	v.PairingID = pairingID(cfg)
 	if role == RoleServe {
 		v.Endpoint, v.Port = cfg.Transport.Endpoint, cfg.Transport.Port
 		v.LANIP = osutil.LANIP()
@@ -135,7 +140,7 @@ func (b *Backend) roleView(role string) RoleView {
 
 // State returns the current view.
 func (b *Backend) State() View {
-	v := View{Admin: osutil.IsElevated(), Serve: b.roleView(RoleServe), Connect: b.roleView(RoleConnect), Phase: "idle"}
+	v := View{Admin: osutil.IsElevated(), Serve: b.roleView(RoleServe), Connect: b.roleView(RoleConnect), Phase: "idle", Nodes: b.Nodes()}
 	b.mu.Lock()
 	v.Running, v.Error = b.running, b.lastErr
 	stopping := b.stopping
@@ -207,11 +212,11 @@ type Pairing struct {
 }
 
 // SetupServe creates (or replaces) the exit-node profile.
-func (b *Backend) SetupServe(endpoint string, port int, transportKind string) (Pairing, error) {
+func (b *Backend) SetupServe(endpoint string, port int, transportKind, cloudflareToken string) (Pairing, error) {
 	if transportKind == "" {
 		transportKind = config.TransportReality
 	}
-	endpoint = strings.TrimSpace(endpoint)
+	endpoint = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(endpoint), "https://"), "http://"), "/"))
 	if endpoint == "" {
 		return Pairing{}, errors.New("enter this PC's public IP address or hostname")
 	}
@@ -221,9 +226,31 @@ func (b *Backend) SetupServe(endpoint string, port int, transportKind string) (P
 	if err := b.notRunning(RoleServe); err != nil {
 		return Pairing{}, err
 	}
+	opts := app.ExitNodeOptions{Endpoint: endpoint, Port: port,
+		Subnet: "10.9.0.0/24", Subnet6: "fd09:b4c0::/64", ReachMode: config.ReachPortForward, Transport: transportKind}
+	if transportKind == config.TransportCloudflare {
+		if _, err := netip.ParseAddr(endpoint); err == nil || !strings.Contains(endpoint, ".") {
+			return Pairing{}, errors.New("enter the hostname you want on Cloudflare, e.g. vpn.yourdomain.com")
+		}
+		if !config.CloudflarePorts[port] {
+			return Pairing{}, errors.New("Cloudflare only forwards ports 443, 2053, 2083, 2087, 2096 and 8443 — use 443")
+		}
+		token := strings.TrimSpace(cloudflareToken)
+		if token == "" {
+			return Pairing{}, errors.New("paste your Cloudflare API token (see the steps in the help)")
+		}
+		ipURL := b.IPCheckURL
+		if ipURL == "" {
+			ipURL = config.Default().Health.IPCheckURL
+		}
+		cf, err := app.PrepareCloudflare(context.Background(), token, endpoint, ipURL)
+		if err != nil {
+			return Pairing{}, fmt.Errorf("Cloudflare: %w", err)
+		}
+		opts.CloudflareZoneID, opts.CloudflareToken = cf.ZoneID, token
+	}
 	p := b.paths(RoleServe)
-	res, err := app.SetupExitNode(p, app.ExitNodeOptions{Endpoint: endpoint, Port: port,
-		Subnet: "10.9.0.0/24", Subnet6: "fd09:b4c0::/64", ReachMode: config.ReachPortForward, Transport: transportKind})
+	res, err := app.SetupExitNode(p, opts)
 	if err != nil {
 		return Pairing{}, err
 	}
@@ -233,7 +260,7 @@ func (b *Backend) SetupServe(endpoint string, port int, transportKind string) (P
 	if err := config.WriteFileAtomic(p.Pairing(), []byte(res.Blob+"\n"), 0o600); err != nil {
 		return Pairing{}, err
 	}
-	slog.Info("exit node configured", "endpoint", endpoint, "port", port)
+	slog.Info("exit node configured", "endpoint", endpoint, "port", port, "disguise", transportKind)
 	return pairingView(res.Blob)
 }
 
@@ -255,41 +282,42 @@ func pairingView(blob string) (Pairing, error) {
 	return Pairing{Code: blob, QR: "data:image/png;base64," + base64.StdEncoding.EncodeToString(code.PNG())}, nil
 }
 
-// ImportPairing creates (or replaces) the client profile from a pairing code.
+// ImportPairing adds an exit node from a pairing code and selects it.
 func (b *Backend) ImportPairing(blob string) error {
-	if err := b.notRunning(RoleConnect); err != nil {
-		return err
-	}
-	cfg, sec, err := app.ImportBlob(blob)
-	if err != nil {
-		return fmt.Errorf("that doesn't look like a valid pairing code: %w", err)
-	}
-	p := b.paths(RoleConnect)
-	if err := config.Save(p, cfg, sec); err != nil {
-		return err
-	}
-	slog.Info("client configured", "endpoint", cfg.Transport.Endpoint)
-	return nil
+	_, err := b.AddNode(blob, "")
+	return err
 }
 
-// SetKillSwitch toggles the client's kill-switch preference.
+// SetKillSwitch sets the kill-switch preference (for every saved exit node).
 func (b *Backend) SetKillSwitch(on bool) error {
 	if err := b.notRunning(RoleConnect); err != nil {
 		return err
 	}
-	p := b.paths(RoleConnect)
-	cfg, sec, err := config.Load(p)
-	if err != nil {
-		return err
+	for _, id := range b.nodeIDs() {
+		p := config.Paths{Dir: b.nodeDir(id)}
+		cfg, sec, err := config.Load(p)
+		if err != nil {
+			continue
+		}
+		cfg.Client.KillSwitch = on
+		if err := config.Save(p, cfg, sec); err != nil {
+			return err
+		}
 	}
-	cfg.Client.KillSwitch = on
-	return config.Save(p, cfg, sec)
+	return nil
 }
 
-// Reset forgets a role's profile (keys, certificate, pairing).
+// Reset forgets a role's profile (keys, certificate, pairing); for Connect,
+// the selected exit node.
 func (b *Backend) Reset(role string) error {
 	if err := b.notRunning(role); err != nil {
 		return err
+	}
+	if role == RoleConnect {
+		if id := b.selectedNode(); id != "" {
+			return b.RemoveNode(id)
+		}
+		return nil
 	}
 	dir := b.ProfileDir(role)
 	if dir == b.Base {

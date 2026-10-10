@@ -95,7 +95,7 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	if err := eng.Up(ctx, settings); err != nil {
 		return err
 	}
-	cl.push(func(ctx context.Context) { eng.Down(ctx) })
+	cl.push("close tunnel adapter", func(ctx context.Context) { eng.Down(ctx) })
 	rt.Iface = eng.Name()
 
 	// 2. Let the client in through the OS firewall (Windows blocks inbound by default).
@@ -145,7 +145,7 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	if err := tr.Start(ctx); err != nil {
 		slog.Warn("transport not ready yet (it keeps retrying)", "err", err)
 	}
-	cl.push(func(context.Context) { tr.Stop() })
+	cl.push("stop transport", func(context.Context) { tr.Stop() })
 
 	// 5. Router: forward the port automatically (UPnP) and detect CGNAT.
 	if c.Reachability.Mode == config.ReachPortForward {
@@ -153,14 +153,14 @@ func Serve(ctx context.Context, e *Env) (err error) {
 		var stop func()
 		rt.Router, stop = openRouterPort(ctx, c, rt.LANIP)
 		if stop != nil {
-			cl.push(func(context.Context) { stop() })
+			cl.push("close router port", func(context.Context) { stop() })
 		}
 	}
 
 	// 6. DDNS updater.
 	if c.DDNS.Provider != "" {
 		u, err := ddns.New(ddns.Options{Provider: c.DDNS.Provider, Domain: c.DDNS.Domain, Token: e.Sec.DDNSToken,
-			ZoneID: c.DDNS.ZoneID, IPCheckURL: c.Health.IPCheckURL})
+			ZoneID: c.DDNS.ZoneID, Proxied: c.DDNS.Proxied, IPCheckURL: c.Health.IPCheckURL})
 		if err != nil {
 			return err
 		}
@@ -280,7 +280,7 @@ func (e *Env) serveTransport(ctx context.Context, cl *cleanup) (transport.Transp
 		if err != nil {
 			return nil, transport.WstunnelOptions{}, err
 		}
-		cl.push(func(context.Context) { os.Remove(cfgPath) }) // contains secrets
+		cl.push("remove xray config", func(context.Context) { os.Remove(cfgPath) }) // contains secrets
 		return tr, transport.WstunnelOptions{Role: "reality-server"}, nil
 	}
 
@@ -305,7 +305,7 @@ func (e *Env) serveTransport(ctx context.Context, cl *cleanup) (transport.Transp
 			return nil, opts, err
 		}
 		go proxy.Serve(ctx)
-		cl.push(func(context.Context) { proxy.Close() })
+		cl.push("close TLS proxy", func(context.Context) { proxy.Close() })
 		opts.Role, opts.ServerURL = transport.RoleReverseClient, "ws://"+proxy.Addr()
 		opts.RelayBind, opts.RemoteUDP = "127.0.0.1:"+strconv.Itoa(r.RemotePort), wgLocal
 	} else {

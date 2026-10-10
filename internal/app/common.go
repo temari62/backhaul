@@ -24,6 +24,10 @@ import (
 // TeardownTimeout bounds the restore pass so a hung command can't block exit.
 const TeardownTimeout = 60 * time.Second
 
+// MaxShutdown is the longest a stop can take: the restore pass plus every
+// bounded cleanup step (at most 5).
+const MaxShutdown = TeardownTimeout + 5*cleanupStepLimit + 5*time.Second
+
 // StopPollInterval is how often serve/connect check for `backhaul disconnect`.
 const StopPollInterval = time.Second
 
@@ -130,9 +134,23 @@ func (e *PreflightError) Has(check string) (doctor.Result, bool) {
 
 // cleanup is a LIFO stack of in-process teardown steps (closing the TUN,
 // stopping wstunnel, …) that run after the system-change journal is unwound.
-type cleanup []func(context.Context)
+type cleanup []cleanupStep
 
-func (c *cleanup) push(f func(context.Context)) { *c = append(*c, f) }
+type cleanupStep struct {
+	name string
+	f    func(context.Context)
+}
+
+func (c *cleanup) push(name string, f func(context.Context)) {
+	*c = append(*c, cleanupStep{name, f})
+}
+
+// CleanupStepTimeout bounds each in-process cleanup step (stopping the
+// transport, closing the tunnel adapter). A step that overruns is abandoned —
+// the process is about to stop using it anyway — so Disconnect always ends.
+var CleanupStepTimeout = cleanupStepLimit
+
+const cleanupStepLimit = 10 * time.Second
 
 // teardown unwinds the journal (routes, DNS, firewall, NAT) and then the
 // in-process cleanup stack, with a fresh context because the run context is
@@ -143,12 +161,33 @@ func teardown(j *undo.Journal, c cleanup) {
 	slog.Info("restoring original network configuration")
 	err := j.Unwind(ctx)
 	for i := len(c) - 1; i >= 0; i-- {
-		c[i](ctx)
+		runBounded(context.Background(), c[i]) // own budget: run even if the restore used all of its time
 	}
 	if err != nil {
 		slog.Warn("some restore steps failed; run `backhaul doctor --recover` or inspect manually", "err", err)
 	} else {
 		slog.Info("system restored")
+	}
+}
+
+func runBounded(ctx context.Context, s cleanupStep) {
+	sctx, cancel := context.WithTimeout(ctx, CleanupStepTimeout)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Warn("shutdown step panicked", "step", s.name, "panic", r)
+			}
+		}()
+		s.f(sctx)
+	}()
+	select {
+	case <-done:
+		slog.Debug("shutdown step done", "step", s.name)
+	case <-sctx.Done():
+		slog.Warn("shutdown step did not finish in time; skipping it", "step", s.name)
 	}
 }
 

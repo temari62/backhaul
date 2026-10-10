@@ -2,9 +2,12 @@ package undo
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestUnwindRestoresInReverse(t *testing.T) {
@@ -69,5 +72,43 @@ func TestUnwindContinuesPastFailures(t *testing.T) {
 	}
 	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
 		t.Fatal("later step skipped after earlier failure")
+	}
+}
+
+// A hung step must not block the rest of the restore, and must stay in the
+// journal so the next start retries it.
+func TestUnwindBoundsHungStepAndKeepsItForRetry(t *testing.T) {
+	old := StepTimeout
+	StepTimeout = time.Second
+	defer func() { StepTimeout = old }()
+	dir := t.TempDir()
+	gone := filepath.Join(dir, "temp-file")
+	os.WriteFile(gone, []byte("x"), 0o600)
+	hang := []string{"sleep", "30"}
+	if runtime.GOOS == "windows" {
+		hang = []string{"ping", "-n", "30", "127.0.0.1"}
+	}
+	j := Open(filepath.Join(dir, "undo.json"))
+	j.Push(Action{Desc: "remove temp", Kind: KindRemoveFile, Path: gone})
+	j.Push(Exec("hung step", hang...))
+
+	start := time.Now()
+	if err := j.Unwind(context.Background()); err == nil {
+		t.Fatal("expected the timed-out step to be reported")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("unwind took %s; a hung step must be cut off", d)
+	}
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Fatal("the step after the hung one did not run")
+	}
+	b, err := os.ReadFile(j.Path())
+	if err != nil {
+		t.Fatalf("journal should be kept for retry: %v", err)
+	}
+	var left []Action
+	json.Unmarshal(b, &left)
+	if len(left) != 1 || left[0].Desc != "hung step" {
+		t.Fatalf("journal = %+v, want only the hung step", left)
 	}
 }

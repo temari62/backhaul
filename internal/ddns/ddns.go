@@ -28,6 +28,7 @@ type Options struct {
 	Domain     string
 	Token      string
 	ZoneID     string
+	Proxied    bool // Cloudflare: route the record through Cloudflare
 	IPCheckURL string
 	Client     *http.Client
 }
@@ -41,7 +42,7 @@ func New(o Options) (Updater, error) {
 	case "duckdns":
 		return &DuckDNS{o: o, BaseURL: "https://www.duckdns.org/update"}, nil
 	case "cloudflare":
-		return &Cloudflare{o: o, BaseURL: "https://api.cloudflare.com/client/v4"}, nil
+		return &Cloudflare{o: o, BaseURL: CloudflareAPI}, nil
 	default:
 		return nil, fmt.Errorf("unknown ddns provider %q", o.Provider)
 	}
@@ -149,22 +150,33 @@ func (c *Cloudflare) Update(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return ip, c.Upsert(ctx, ip)
+}
+
+// Upsert creates or updates the A record for the domain to point at ip,
+// with the configured proxied (orange-cloud) setting.
+func (c *Cloudflare) Upsert(ctx context.Context, ip string) error {
 	var recs []struct {
 		ID      string `json:"id"`
 		Content string `json:"content"`
+		Proxied bool   `json:"proxied"`
 	}
 	zone := url.PathEscape(c.o.ZoneID)
 	if err := c.call(ctx, http.MethodGet, "/zones/"+zone+"/dns_records?type=A&name="+url.QueryEscape(c.o.Domain), nil, &recs); err != nil {
-		return "", err
+		return err
 	}
-	rec := map[string]any{"type": "A", "name": c.o.Domain, "content": ip, "ttl": 60, "proxied": false}
+	ttl := 60
+	if c.o.Proxied {
+		ttl = 1 // "automatic": proxied records' TTL is managed by Cloudflare
+	}
+	rec := map[string]any{"type": "A", "name": c.o.Domain, "content": ip, "ttl": ttl, "proxied": c.o.Proxied}
 	if len(recs) == 0 {
-		return ip, c.call(ctx, http.MethodPost, "/zones/"+zone+"/dns_records", rec, nil)
+		return c.call(ctx, http.MethodPost, "/zones/"+zone+"/dns_records", rec, nil)
 	}
-	if recs[0].Content == ip {
-		return ip, nil
+	if recs[0].Content == ip && recs[0].Proxied == c.o.Proxied {
+		return nil
 	}
-	return ip, c.call(ctx, http.MethodPatch, "/zones/"+zone+"/dns_records/"+url.PathEscape(recs[0].ID), rec, nil)
+	return c.call(ctx, http.MethodPatch, "/zones/"+zone+"/dns_records/"+url.PathEscape(recs[0].ID), rec, nil)
 }
 
 // PublicIP asks an IP-echo service for this machine's public address.

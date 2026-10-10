@@ -342,3 +342,7 @@ func DisableKillSwitch(ctx context.Context) error {
 	}
 	return nil
 }
+
+// KillSwitchActive reports whether the kill switch is installed (Apply
+// fails rather than continuing without it here).
+func KillSwitchActive() bool { return true }

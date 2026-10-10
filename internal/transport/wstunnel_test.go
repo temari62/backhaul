@@ -17,7 +17,7 @@ import (
 func TestArgs(t *testing.T) {
 	srv := WstunnelOptions{Role: RoleServer, ListenAddr: "0.0.0.0", Port: 443, CertFile: "c", KeyFile: "k",
 		RestrictTo: "127.0.0.1:51820", PathPrefix: "p"}.Args()
-	want := []string{"server", "--log-lvl", "INFO", "--restrict-to", "127.0.0.1:51820", "--tls-certificate", "c",
+	want := []string{"server", "--log-lvl", "INFO", "--dns-resolver", "system://0.0.0.0", "--restrict-to", "127.0.0.1:51820", "--tls-certificate", "c",
 		"--tls-private-key", "k", "--restrict-http-upgrade-path-prefix", "p", "wss://0.0.0.0:443"}
 	if !slices.Equal(srv, want) {
 		t.Fatalf("server args %v", srv)
@@ -30,6 +30,13 @@ func TestArgs(t *testing.T) {
 	rev := WstunnelOptions{Role: RoleReverseClient, RelayBind: "127.0.0.1:51820", RemoteUDP: "127.0.0.1:51820", ServerURL: "ws://x"}.Args()
 	if !slices.Contains(rev, "-R") {
 		t.Fatalf("reverse args %v", rev)
+	}
+	// Every role must skip wstunnel's Windows adapter-DNS probing, which
+	// crashed (0xc0000005) on a user's machine before it logged anything.
+	for _, a := range [][]string{srv, cli, rev} {
+		if i := slices.Index(a, "--dns-resolver"); i < 0 || a[i+1] != "system://0.0.0.0" {
+			t.Fatalf("missing system resolver: %v", a)
+		}
 	}
 	if got := (WstunnelOptions{Role: RoleServer, ListenAddr: "::", Port: 443}).Args(); got[len(got)-1] != "wss://[::]:443" {
 		t.Fatalf("v6 listen %v", got)

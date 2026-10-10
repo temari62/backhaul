@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"backhaul/internal/osutil"
 )
@@ -69,11 +70,13 @@ func (j *Journal) Len() int {
 	return len(j.actions)
 }
 
-func (j *Journal) flushLocked() error {
+func (j *Journal) flushLocked() error { return j.writeLocked(j.actions) }
+
+func (j *Journal) writeLocked(actions []Action) error {
 	if err := os.MkdirAll(filepath.Dir(j.path), 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(j.actions, "", "  ")
+	b, err := json.MarshalIndent(actions, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -84,26 +87,54 @@ func (j *Journal) flushLocked() error {
 	return os.Rename(tmp, j.path)
 }
 
+// StepTimeout bounds each undo step, so one hung command (a stuck
+// PowerShell/WMI call) cannot hold up the steps after it.
+var StepTimeout = 20 * time.Second
+
 // Unwind runs all actions in reverse order. Errors are logged and collected
-// but never stop the unwind — partial restore beats none.
+// but never stop the unwind — partial restore beats none. Steps that ran out
+// of time stay in the journal so the next start (Recover) retries them.
 func (j *Journal) Unwind(ctx context.Context) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	var errs []error
+	var retry []Action // in descending journal order
 	for i := len(j.actions) - 1; i >= 0; i-- {
-		if err := run(ctx, j.actions[i]); err != nil && j.actions[i].BestEffort {
-			slog.Debug("best-effort undo step skipped", "step", j.actions[i].Desc, "err", err)
-		} else if err != nil {
-			slog.Warn("undo step failed", "step", j.actions[i].Desc, "err", err)
+		a := j.actions[i]
+		sctx, cancel := context.WithTimeout(ctx, StepTimeout)
+		err := run(sctx, a)
+		timedOut := err != nil && sctx.Err() != nil
+		cancel()
+		switch {
+		case err == nil:
+			slog.Debug("undo step ok", "step", a.Desc)
+		case timedOut:
+			slog.Warn("undo step timed out; it will be retried the next time Backhaul starts", "step", a.Desc)
+			retry = append(retry, a)
+			errs = append(errs, fmt.Errorf("%s: timed out", a.Desc))
+		case a.BestEffort:
+			slog.Debug("best-effort undo step skipped", "step", a.Desc, "err", err)
+		default:
+			slog.Warn("undo step failed", "step", a.Desc, "err", err)
 			errs = append(errs, err)
-		} else {
-			slog.Debug("undo step ok", "step", j.actions[i].Desc)
 		}
 		j.actions = j.actions[:i]
-		_ = j.flushLocked()
+		_ = j.writeLocked(pending(j.actions, retry))
 	}
-	_ = os.Remove(j.path)
+	if len(retry) == 0 {
+		_ = os.Remove(j.path)
+	}
 	return errors.Join(errs...)
+}
+
+// pending is what is still left to undo: the unrun prefix, then the retries
+// back in their original (ascending) order.
+func pending(unrun, retry []Action) []Action {
+	out := append([]Action(nil), unrun...)
+	for k := len(retry) - 1; k >= 0; k-- {
+		out = append(out, retry[k])
+	}
+	return out
 }
 
 // Recover reverts a journal left behind by a crashed run. It returns the

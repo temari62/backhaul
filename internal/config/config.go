@@ -89,31 +89,41 @@ type Peer struct {
 
 // Transport configures the obfuscating wrapper (wstunnel).
 type Transport struct {
-	Kind            string   `toml:"kind"`
-	Endpoint        string   `toml:"endpoint"`    // connect: exit node hostname/IP
-	Port            int      `toml:"port"`        // WSS port (443)
-	TLSSHA256       string   `toml:"tls_sha256"`  // pinned cert fingerprint
-	ListenAddr      string   `toml:"listen_addr"` // serve: wstunnel bind address
-	PathPrefix      string   `toml:"path_prefix"` // shared HTTP upgrade path; unknown paths are rejected
-	CertFile        string   `toml:"cert_file,omitempty"`
-	KeyFile         string   `toml:"key_file,omitempty"`
-	LocalUDPPort    int      `toml:"local_udp_port"`  // connect: wstunnel local UDP listener
-	RemoteUDPPort   int      `toml:"remote_udp_port"` // connect: the exit node's WireGuard UDP port
-	WstunnelPath    string   `toml:"wstunnel_path,omitempty"`
-	WstunnelVersion string   `toml:"wstunnel_version,omitempty"`
-	XrayPath        string   `toml:"xray_path,omitempty"`
-	XrayVersion     string   `toml:"xray_version,omitempty"`
-	Reality         Reality  `toml:"reality"`
-	DialTimeout     Duration `toml:"dial_timeout"`
-	ReadyTimeout    Duration `toml:"ready_timeout"`
-	BackoffMin      Duration `toml:"backoff_min"`
-	BackoffMax      Duration `toml:"backoff_max"`
+	Kind            string  `toml:"kind"`
+	Endpoint        string  `toml:"endpoint"`    // connect: exit node hostname/IP
+	Port            int     `toml:"port"`        // WSS port (443)
+	TLSSHA256       string  `toml:"tls_sha256"`  // pinned cert fingerprint
+	ListenAddr      string  `toml:"listen_addr"` // serve: wstunnel bind address
+	PathPrefix      string  `toml:"path_prefix"` // shared HTTP upgrade path; unknown paths are rejected
+	CertFile        string  `toml:"cert_file,omitempty"`
+	KeyFile         string  `toml:"key_file,omitempty"`
+	LocalUDPPort    int     `toml:"local_udp_port"`  // connect: wstunnel local UDP listener
+	RemoteUDPPort   int     `toml:"remote_udp_port"` // connect: the exit node's WireGuard UDP port
+	WstunnelPath    string  `toml:"wstunnel_path,omitempty"`
+	WstunnelVersion string  `toml:"wstunnel_version,omitempty"`
+	XrayPath        string  `toml:"xray_path,omitempty"`
+	XrayVersion     string  `toml:"xray_version,omitempty"`
+	Reality         Reality `toml:"reality"`
+	// EdgeIP / EdgeIPs (cloudflare transport, client) pin the Cloudflare
+	// addresses to use instead of the automatic pool (the hostname's own
+	// addresses plus others from Cloudflare's ranges). Useful if DNS is
+	// tampered with or particular addresses work best on your network.
+	EdgeIP       string   `toml:"edge_ip,omitempty"`
+	EdgeIPs      []string `toml:"edge_ips,omitempty"`
+	DialTimeout  Duration `toml:"dial_timeout"`
+	ReadyTimeout Duration `toml:"ready_timeout"`
+	BackoffMin   Duration `toml:"backoff_min"`
+	BackoffMax   Duration `toml:"backoff_max"`
 }
 
 // Transport kinds.
 const (
 	TransportWstunnel = "wstunnel" // WebSocket over TLS with a pinned self-signed certificate
 	TransportReality  = "reality"  // VLESS + REALITY via Xray: impersonates a real website
+	// TransportCloudflare carries wstunnel through the Cloudflare CDN: clients
+	// connect to Cloudflare's addresses, which censors cannot block without
+	// breaking a large part of the web, and Cloudflare forwards to the exit node.
+	TransportCloudflare = "cloudflare"
 )
 
 // Reality configures the REALITY transport. The exit node impersonates
@@ -146,9 +156,12 @@ type Relay struct {
 
 // DDNS configures the optional dynamic DNS updater (serve mode).
 type DDNS struct {
-	Provider string   `toml:"provider"` // "duckdns" | "cloudflare" | ""
-	Domain   string   `toml:"domain"`   // full hostname to update
-	ZoneID   string   `toml:"zone_id,omitempty"`
+	Provider string `toml:"provider"` // "duckdns" | "cloudflare" | ""
+	Domain   string `toml:"domain"`   // full hostname to update
+	ZoneID   string `toml:"zone_id,omitempty"`
+	// Proxied makes a Cloudflare record go through Cloudflare (orange cloud);
+	// required by the "cloudflare" transport.
+	Proxied  bool     `toml:"proxied,omitempty"`
 	Interval Duration `toml:"interval"`
 }
 
@@ -449,4 +462,13 @@ func (c *Config) RemoteHost() (host string, port int, fingerprint string) {
 		return c.Reachability.Relay.Host, c.Reachability.Relay.Port, c.Reachability.Relay.TLSSHA256
 	}
 	return c.Transport.Endpoint, c.Transport.Port, c.Transport.TLSSHA256
+}
+
+// PinnedEdges is edge_ip plus edge_ips (cloudflare transport).
+func (t Transport) PinnedEdges() []string {
+	var out []string
+	if t.EdgeIP != "" {
+		out = append(out, t.EdgeIP)
+	}
+	return append(out, t.EdgeIPs...)
 }
