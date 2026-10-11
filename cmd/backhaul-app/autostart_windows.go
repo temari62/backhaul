@@ -26,7 +26,7 @@ func autostartEnabled() (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	out, err := osutil.PowerShell(ctx, fmt.Sprintf(
-		`$t = Get-ScheduledTask -TaskName %s -ErrorAction SilentlyContinue; if ($t) { 'yes' } else { 'no' }`, psQuote(taskName)))
+		`if (@(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -eq %s }).Count) { 'yes' } else { 'no' }`, psQuote(taskName)))
 	if err != nil {
 		return false, err
 	}
@@ -37,9 +37,13 @@ func setAutostart(on bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if !on {
-		_, err := osutil.PowerShell(ctx, fmt.Sprintf(
-			`Unregister-ScheduledTask -TaskName %s -Confirm:$false -ErrorAction SilentlyContinue`, psQuote(taskName)))
-		return err
+		// Look the task up first: the scheduled-task cmdlets fail on a missing
+		// task even with -ErrorAction SilentlyContinue when errors are fatal.
+		_, err := osutil.PowerShell(ctx, unregisterScript(taskName))
+		if err != nil {
+			return fmt.Errorf("could not turn off starting with Windows: %w", err)
+		}
+		return nil
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -74,4 +78,12 @@ func launchedByAutostart() bool {
 		}
 	}
 	return false
+}
+
+// unregisterScript removes the task if it exists and checks it is gone.
+func unregisterScript(name string) string {
+	return fmt.Sprintf(`
+$t = @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -eq %[1]s })
+foreach ($x in $t) { Unregister-ScheduledTask -TaskName $x.TaskName -TaskPath $x.TaskPath -Confirm:$false }
+if (@(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -eq %[1]s }).Count) { throw 'the task is still registered' }`, psQuote(name))
 }

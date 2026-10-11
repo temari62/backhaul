@@ -132,7 +132,7 @@ func (b *Backend) connectDir() string {
 // Nodes lists the saved exit nodes, oldest first.
 func (b *Backend) Nodes() []Node {
 	sel := b.selectedNode()
-	var out []Node
+	out := []Node{} // never null in JSON: the page reads .length
 	for _, id := range b.nodeIDs() {
 		dir := b.nodeDir(id)
 		n := Node{ID: id, Selected: id == sel}

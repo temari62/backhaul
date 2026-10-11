@@ -3,6 +3,8 @@
 package main
 
 import (
+	"log/slog"
+	"os"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -29,6 +31,7 @@ var (
 var (
 	procGetWindowLongPtrW = user32.NewProc("GetWindowLongPtrW")
 	procSetWindowPos      = user32.NewProc("SetWindowPos")
+	procGetWindowRect     = user32.NewProc("GetWindowRect")
 	procReleaseCapture    = user32.NewProc("ReleaseCapture")
 	procSendMessageW      = user32.NewProc("SendMessageW")
 	procDefWindowProcW    = user32.NewProc("DefWindowProcW")
@@ -52,7 +55,44 @@ var (
 	startHidden atomic.Bool
 )
 
-const wmCreate = 0x0001
+const wmCreate, wmSize = 0x0001, 0x0005
+
+var (
+	gdi32                  = windows.NewLazySystemDLL("gdi32.dll")
+	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
+	procSetWindowRgn       = user32.NewProc("SetWindowRgn")
+	// roundByRegion: Windows 10 has no rounded-corner option, so the window
+	// is clipped to a rounded rectangle instead (and the page draws a border).
+	roundByRegion atomic.Bool
+)
+
+// roundCorners asks Windows 11 for rounded corners; on older Windows it
+// falls back to a rounded window region. Reports whether the fallback is used.
+func roundCorners(hwnd uintptr) bool {
+	// Windows 11 is build 22000+. Older builds may accept the attribute
+	// without rounding anything, so the build decides, not the return value.
+	build := windows.RtlGetVersion().BuildNumber
+	const dwmwaWindowCornerPreference, dwmwcpRound = 33, 2
+	v := int32(dwmwcpRound)
+	if build >= 22000 && os.Getenv("BACKHAUL_ROUND_REGION") == "" { // env: test the fallback
+		if r, _, _ := procDwmSetWindowAttr.Call(hwnd, dwmwaWindowCornerPreference, uintptr(unsafe.Pointer(&v)), unsafe.Sizeof(v)); r == 0 {
+			slog.Info("window corners: rounded by Windows", "build", build)
+			return false
+		}
+	}
+	slog.Info("window corners: rounded by window region", "build", build)
+	roundByRegion.Store(true)
+	var rc struct{ l, t, r, b int32 }
+	procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
+	setRoundRegion(hwnd, rc.r-rc.l, rc.b-rc.t)
+	return true
+}
+
+func setRoundRegion(hwnd uintptr, w, h int32) {
+	const radius = 16
+	rgn, _, _ := procCreateRoundRectRgn.Call(0, 0, uintptr(w+1), uintptr(h+1), radius, radius)
+	procSetWindowRgn.Call(hwnd, rgn, 1) // the system owns rgn now
+}
 
 // cloak hides (or reveals) a window without changing its visibility state:
 // Windows treats it as shown, it just isn't drawn.
@@ -86,6 +126,8 @@ var frameProc = windows.NewCallback(func(h, msg, wp, lp uintptr) uintptr {
 		return r
 	case msg == wmCreate && startHidden.Load():
 		cloak(h, true) // before go-webview2 shows it
+	case msg == wmSize && roundByRegion.Load():
+		setRoundRegion(h, int32(lp&0xffff), int32((lp>>16)&0xffff))
 	}
 	r, _, _ := procCallWindowProcW.Call(origWndProc, h, msg, wp, lp)
 	return r

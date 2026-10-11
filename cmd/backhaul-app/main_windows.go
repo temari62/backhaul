@@ -112,6 +112,7 @@ func main() {
 	hwnd := uintptr(w.Window())
 	applyTitleBarTheme(windows.HWND(hwnd))
 	customFrame(hwnd)
+	useRegion := roundCorners(hwnd)
 	runTray(w, backend)
 	if launchedByAutostart() {
 		procShowWindow.Call(hwnd, swHide) // start in the tray
@@ -138,6 +139,9 @@ func main() {
 		fatal(err.Error())
 	}
 	w.Init(rpcShim)
+	if useRegion {
+		w.Init("window.__roundRegion = true;") // the page then draws the rounded border
+	}
 	if out := os.Getenv("BACKHAUL_APP_SELFTEST"); out != "" {
 		ui.selftestOut = out
 		if hold := os.Getenv("BACKHAUL_APP_SELFTEST_HOLD"); hold != "" {

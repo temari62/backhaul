@@ -48,6 +48,7 @@ header { cursor: default; padding-top: 2px; }
 .winbtn { width: 30px; height: 28px; padding: 0; border-radius: 7px; background: none; color: var(--muted); display: grid; place-items: center; }
 .winbtn:hover { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
 .winbtn.close:hover { background: #e81123; color: #fff; }
+html.rgn::after { content: ""; position: fixed; inset: 0; border: 1px solid color-mix(in srgb, var(--text) 24%, transparent); border-radius: 8px; pointer-events: none; z-index: 60; }
 .edge { position: fixed; z-index: 50; }
 .edge.l { left: 0; top: 6px; bottom: 6px; width: 5px; cursor: ew-resize; }
 .edge.r { right: 0; top: 6px; bottom: 6px; width: 5px; cursor: ew-resize; }
@@ -168,7 +169,7 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
 .qr img { width: 132px; height: 132px; border-radius: 8px; background: #fff; padding: 5px; image-rendering: pixelated; flex: none; }
 .qr ol { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
 .qr ol li { margin-bottom: 4px; }
-#toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%) translateY(16px); opacity: 0; z-index: 9;
+#toast { position: fixed; left: 50%; bottom: 18px; margin: 0; transform: translateX(-50%) translateY(16px); opacity: 0; z-index: 9;
   background: var(--text); color: var(--bg); padding: 8px 13px; border-radius: 9px; font-size: 12.5px; transition: .25s; pointer-events: none; }
 #toast.show { opacity: 1; transform: translateX(-50%); }
 .spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
@@ -192,6 +193,7 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
       <button class="tab" id="tabServe" role="tab" onclick="showTab('serve')"><span class="dot" id="dotServe" hidden></span>Share</button>
     </nav>
     <div class="winbtns">
+      <button class="winbtn" onclick="openSettings()" title="Settings"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
       <button class="winbtn" onclick="bh('minimize')" title="Minimize"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6h8" stroke="currentColor" stroke-width="1.3"/></svg></button>
       <button class="winbtn close" onclick="bh('hide')" title="Close (keeps running in the tray)"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3"/></svg></button>
     </div>
@@ -232,13 +234,8 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
         <div class="row">
           <input id="nodeName" type="text" placeholder="Name (optional), e.g. Home" spellcheck="false" maxlength="60">
           <button class="primary" id="importBtn" onclick="importCode()">Save</button>
+          <button class="secondary" id="cancelAddBtn" onclick="cancelAdd()">Cancel</button>
         </div>
-      </div>
-    </section>
-    <section class="card" id="connectReady">
-      <div class="setting">
-        <div class="t">Kill switch<small>Block traffic outside the tunnel while connected</small></div>
-        <label class="switch"><input type="checkbox" id="ksToggle" onchange="setKS(this.checked)"><span class="slider"></span></label>
       </div>
     </section>
   </div>
@@ -287,10 +284,6 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
       </section>
       <section class="card">
         <div class="setting">
-          <div class="t">Start with Windows<small>Start in the tray and share automatically after sign-in</small></div>
-          <label class="switch"><input type="checkbox" id="autoToggle" onchange="setAuto(this.checked)"><span class="slider"></span></label>
-        </div>
-        <div class="setting">
           <div class="t">Reset exit node<small>New keys; your other PCs need a new pairing code</small></div>
           <button class="secondary" onclick="confirmReset('serve')">Reset…</button>
         </div>
@@ -304,6 +297,23 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
   </details>
   <div class="foot">Closing the window keeps Backhaul running in the tray. Right-click the tray icon → Quit to exit.</div>
 </div>
+
+<dialog id="settingsDlg">
+  <div class="dlg">
+    <h3>Settings</h3>
+    <div>
+      <div class="setting">
+        <div class="t">Start with Windows<small>Start Backhaul in the tray when you sign in. If this PC is an exit node, it starts sharing too.</small></div>
+        <label class="switch"><input type="checkbox" id="autoToggle" onchange="setAuto(this.checked)"><span class="slider"></span></label>
+      </div>
+      <div class="setting" id="connectReady">
+        <div class="t">Kill switch<small id="ksNote">When connected, block traffic outside the tunnel</small></div>
+        <label class="switch"><input type="checkbox" id="ksToggle" onchange="setKS(this.checked)"><span class="slider"></span></label>
+      </div>
+    </div>
+    <div class="actions"><button class="primary" onclick="settingsDlg.close()">Done</button></div>
+  </div>
+</dialog>
 
 <dialog id="renameDlg">
   <div class="dlg">
@@ -351,11 +361,20 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
 
 <script>
 const $ = (id) => document.getElementById(id);
+if (window.__roundRegion) document.documentElement.classList.add('rgn'); // Windows 10: no native rounded corners
 let S = null, logSeq = 0, busy = {}, tab = '', nodesKey = '';
 const ICON_EDIT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 const ICON_DEL = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>';
 
-function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2200); }
+// While a dialog is open the toast moves into it, so it shows above the
+// dialog's blurred backdrop (it stays fixed at the bottom of the window).
+function toast(t) {
+  const el = $('toast'), host = document.querySelector('dialog[open]') || document.body;
+  if (el.parentNode !== host) { el.classList.remove('show'); host.appendChild(el); }
+  el.textContent = t; clearTimeout(el._t);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+  el._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
 function human(n) { if (!n) return '0 B'; const u = ['B','KB','MB','GB','TB']; let i = 0; while (n >= 1024 && i < u.length-1) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + ' ' + u[i]; }
 function shortDur(d) { return (d || '').replace(/(\d+)\.\d+s$/, '$1s').replace(/^(\d+h\d+m)\d+s$/, '$1'); }
 async function call(m, ...a) { try { return await bh(m, ...a); } catch (e) { showError(e.message); throw e; } }
@@ -372,7 +391,7 @@ function render(s) {
   S = s;
   $('adminBadge').hidden = s.admin;
   if (s.error) showError(s.error);
-  if (!tab) showTab(s.running || localStorage.getItem('tab') || (s.serve.configured && !s.nodes.length ? 'serve' : 'connect'));
+  if (!tab) showTab(s.running || savedTab() || (s.serve.configured && !s.nodes.length ? 'serve' : 'connect'));
   $('dotServe').hidden = s.running !== 'serve'; $('dotConnect').hidden = s.running !== 'connect';
 
   // Status card
@@ -422,6 +441,7 @@ function render(s) {
   renderNodes(s);
   $('connectReady').hidden = !s.nodes.length;
   $('ksToggle').checked = s.connect.killswitch; $('ksToggle').disabled = !!s.running;
+  $('ksNote').textContent = s.running === 'connect' ? 'Disconnect to change this' : 'When connected, block traffic outside the tunnel';
   const cb = $('connectBtn'), connected = s.running === 'connect';
   if (!busy.connectBtn) {
     cb.textContent = connected ? (s.phase === 'stopping' ? 'Disconnecting…' : 'Disconnect') : 'Connect';
@@ -431,6 +451,7 @@ function render(s) {
   for (const e of [s.serve, s.connect]) if (e.configError) showError('Config problem: ' + e.configError);
 }
 
+function savedTab() { try { return localStorage.getItem('tab'); } catch (e) { return ''; } }
 function showTab(t) {
   tab = t === 'serve' ? 'serve' : 'connect';
   try { localStorage.setItem('tab', tab); } catch (e) {}
@@ -473,7 +494,10 @@ function renderNodes(s) {
   $('noNodes').hidden = s.nodes.length > 0;
   if (!s.nodes.length) $('addBox').hidden = false;
   $('addLink').hidden = !s.nodes.length;
+  $('cancelAddBtn').hidden = !s.nodes.length;
 }
+function cancelAdd() { $('pairCode').value = ''; $('nodeName').value = ''; $('addBox').hidden = true; }
+function openSettings() { loadAuto(); $('settingsDlg').showModal(); }
 function toggleAdd() { const b = $('addBox'); b.hidden = !b.hidden; if (!b.hidden) $('pairCode').focus(); }
 async function pickNode(id) { try { await call('selectNode', id); } catch (e) {} nodesKey = ''; refresh(); }
 function renameNode(n) {

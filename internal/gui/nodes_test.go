@@ -1,8 +1,10 @@
 package gui
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"backhaul/internal/app"
@@ -95,5 +97,17 @@ func TestMigratesOldClientProfile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(base, RoleConnect)); !os.IsNotExist(err) {
 		t.Fatal("old profile dir still there")
+	}
+}
+
+// The page reads nodes.length, so an empty list must be [] in JSON, not null.
+func TestEmptyNodeListIsJSONArray(t *testing.T) {
+	b := &Backend{Base: t.TempDir()}
+	raw, err := json.Marshal(b.State())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"nodes":[]`) {
+		t.Fatalf("nodes not an empty array: %s", raw)
 	}
 }
