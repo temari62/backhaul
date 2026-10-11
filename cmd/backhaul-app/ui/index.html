@@ -6,321 +6,303 @@
 <title>Backhaul</title>
 <style>
 :root {
-  --bg: #f3f4f8;
-  --bg2: #e9ecf5;
-  --card: #ffffff;
-  --card-border: rgba(15, 23, 42, .08);
-  --text: #0f172a;
-  --muted: #5b6475;
-  --accent: #4f46e5;
-  --accent-2: #06b6d4;
-  --accent-ink: #ffffff;
-  --ok: #16a34a;
-  --warn: #d97706;
-  --bad: #dc2626;
-  --idle: #94a3b8;
-  --field: #f6f7fb;
-  --field-border: rgba(15, 23, 42, .14);
-  --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 8px 24px rgba(15, 23, 42, .06);
-  --radius: 14px;
+  --bg: #f4f5f9; --card: #ffffff; --line: rgba(15, 23, 42, .09);
+  --text: #0f172a; --muted: #64748b;
+  --accent: #4f46e5; --accent-2: #06b6d4; --accent-ink: #ffffff;
+  --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --idle: #94a3b8;
+  --field: #f6f7fb; --field-line: rgba(15, 23, 42, .14);
+  --shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 6px 18px rgba(15, 23, 42, .05);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0d1117;
-    --bg2: #111827;
-    --card: #161b26;
-    --card-border: rgba(255, 255, 255, .07);
-    --text: #e5e7eb;
-    --muted: #9aa3b2;
-    --accent: #818cf8;
-    --accent-2: #22d3ee;
-    --accent-ink: #0b1020;
-    --field: #0f141e;
-    --field-border: rgba(255, 255, 255, .12);
-    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+    --bg: #0d1117; --card: #161b26; --line: rgba(255, 255, 255, .08);
+    --text: #e5e7eb; --muted: #94a3b8;
+    --accent: #818cf8; --accent-2: #22d3ee; --accent-ink: #0b1020;
+    --field: #0f141e; --field-line: rgba(255, 255, 255, .12);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .22);
     color-scheme: dark;
   }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
-body {
-  font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  color: var(--text);
-  background: radial-gradient(1200px 600px at 10% -10%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 60%),
-              radial-gradient(900px 500px at 110% 0%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 60%),
-              linear-gradient(var(--bg), var(--bg2));
-  -webkit-user-select: none; user-select: none;
-  overflow-y: auto;
-}
-.wrap { max-width: 980px; margin: 0 auto; padding: 22px 26px 30px; }
+body { font: 13.5px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--text);
+  background: var(--bg); -webkit-user-select: none; user-select: none; overflow-y: auto; }
+.wrap { max-width: 640px; margin: 0 auto; padding: 10px 10px 14px; display: flex; flex-direction: column; gap: 10px; }
 
-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
-.logo { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; box-shadow: var(--shadow); }
-header h1 { font: 600 19px "Segoe UI Variable Display", "Segoe UI", sans-serif; margin: 0; letter-spacing: .2px; }
-header .sub { color: var(--muted); font-size: 12.5px; }
-.spacer { flex: 1; }
-.badge { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--card-border);
-  background: var(--card); color: var(--muted); }
-.badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+/* Header with tabs */
+header { display: flex; align-items: center; gap: 10px; }
+.logo { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
+header h1 { font: 600 16px "Segoe UI Variable Display", "Segoe UI", sans-serif; margin: 0; flex: 1; }
+.tabs { display: flex; padding: 3px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
+.tab { display: flex; align-items: center; gap: 6px; background: transparent; color: var(--muted); font-weight: 600; padding: 5px 14px; border-radius: 7px; }
+.tab:hover { color: var(--text); }
+.tab.on { background: var(--accent); color: var(--accent-ink); }
+.tab .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 2px var(--card); }
+.badge { font-size: 12px; color: var(--warn); }
 
-/* Status hero */
-.hero { display: flex; align-items: center; gap: 18px; padding: 18px 20px; margin-bottom: 18px;
-  background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: var(--shadow); }
-.orb { width: 54px; height: 54px; border-radius: 50%; flex: none; position: relative; background: var(--idle);
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--idle) 18%, transparent); transition: background .3s, box-shadow .3s; }
-.orb::after { content: ""; position: absolute; inset: 17px; border-radius: 50%; background: rgba(255,255,255,.85); }
-.orb.up { background: var(--ok); box-shadow: 0 0 0 6px color-mix(in srgb, var(--ok) 20%, transparent); }
+/* Window controls (no native title bar) */
+header { cursor: default; padding-top: 2px; }
+.winbtns { display: flex; gap: 2px; margin-left: 4px; }
+.winbtn { width: 30px; height: 28px; padding: 0; border-radius: 7px; background: none; color: var(--muted); display: grid; place-items: center; }
+.winbtn:hover { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
+.winbtn.close:hover { background: #e81123; color: #fff; }
+.edge { position: fixed; z-index: 50; }
+.edge.l { left: 0; top: 6px; bottom: 6px; width: 5px; cursor: ew-resize; }
+.edge.r { right: 0; top: 6px; bottom: 6px; width: 5px; cursor: ew-resize; }
+.edge.t { top: 0; left: 6px; right: 6px; height: 4px; cursor: ns-resize; }
+.edge.b { bottom: 0; left: 6px; right: 6px; height: 5px; cursor: ns-resize; }
+.edge.tl { top: 0; left: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+.edge.tr { top: 0; right: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.edge.bl { bottom: 0; left: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.edge.br { bottom: 0; right: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+
+/* Cards */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 12px; }
+.panel { display: flex; flex-direction: column; gap: 12px; }
+
+/* Status */
+.status { display: flex; align-items: center; gap: 14px; }
+.orb { width: 38px; height: 38px; border-radius: 50%; flex: none; position: relative; background: var(--idle);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--idle) 18%, transparent); transition: background .3s, box-shadow .3s; }
+.orb::after { content: ""; position: absolute; inset: 12px; border-radius: 50%; background: rgba(255,255,255,.88); }
+.orb.up { background: var(--ok); box-shadow: 0 0 0 5px color-mix(in srgb, var(--ok) 20%, transparent); }
 .orb.busy { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
 .orb.wait { background: var(--accent); animation: breathe 2.6s ease-in-out infinite; }
-@keyframes breathe { 50% { box-shadow: 0 0 0 11px color-mix(in srgb, var(--accent) 10%, transparent); } }
-.orb.bad { background: var(--bad); box-shadow: 0 0 0 6px color-mix(in srgb, var(--bad) 18%, transparent); }
-@keyframes pulse { 50% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--warn) 6%, transparent); } }
-.hero h2 { margin: 0; font: 600 20px "Segoe UI Variable Display", "Segoe UI", sans-serif; }
-.hero p { margin: 2px 0 0; color: var(--muted); }
-.stats { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 10px; }
-.stat { font-size: 12.5px; color: var(--muted); }
-.stat b { display: block; color: var(--text); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.orb.bad { background: var(--bad); box-shadow: 0 0 0 5px color-mix(in srgb, var(--bad) 18%, transparent); }
+@keyframes pulse { 50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--warn) 8%, transparent); } }
+@keyframes breathe { 50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--accent) 12%, transparent); } }
+.status h2 { margin: 0; font: 600 17px "Segoe UI Variable Display", "Segoe UI", sans-serif; }
+.status p { margin: 1px 0 0; color: var(--muted); font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.chip { display: flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 999px; font-size: 12px;
+  background: var(--field); border: 1px solid var(--line); color: var(--muted); font-variant-numeric: tabular-nums; }
+.chip b { color: var(--text); font-weight: 600; }
 
-/* Tabs */
-.tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 16px; border-radius: 12px; width: fit-content;
-  background: var(--card); border: 1px solid var(--card-border); box-shadow: var(--shadow); }
-.tab { display: flex; align-items: center; gap: 8px; background: transparent; color: var(--muted); font-weight: 600; padding: 8px 16px; }
-.tab small { font-weight: 400; font-size: 12px; opacity: .8; }
-.tab:hover { color: var(--text); }
-.tab.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
-.tab .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
-
-/* Role cards */
-.cards { display: block; }
-.card { background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: var(--shadow);
-  padding: 20px; display: flex; flex-direction: column; gap: 14px; min-height: 290px; transition: border-color .2s, transform .2s; }
-.card.active { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
-.card-head { display: flex; gap: 14px; align-items: flex-start; }
-.icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none;
-  background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); }
-.card h3 { margin: 0; font: 600 17px "Segoe UI Variable Display", "Segoe UI", sans-serif; }
-.card .desc { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
-.body { display: flex; flex-direction: column; gap: 10px; flex: 1; }
-.row { display: flex; gap: 8px; align-items: center; }
-.kv { color: var(--muted); font-size: 13px; }
-.kv code { color: var(--text); font: 13px "Cascadia Mono", Consolas, monospace; -webkit-user-select: text; user-select: text; }
-label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
-input[type=text], input[type=number], textarea, select {
-  font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--field-border);
-  border-radius: 9px; padding: 9px 11px; outline: none; width: 100%; -webkit-user-select: text; user-select: text; }
-textarea { resize: none; height: 96px; font: 12px "Cascadia Mono", Consolas, monospace; }
-input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
-
-button { font: inherit; border: 0; cursor: pointer; border-radius: 10px; padding: 9px 14px; transition: filter .15s, transform .05s, opacity .2s; }
+/* Fields & buttons */
+label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+input[type=text], input[type=number], input[type=password], textarea, select {
+  font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--field-line);
+  border-radius: 8px; padding: 7px 10px; outline: none; width: 100%; -webkit-user-select: text; user-select: text; }
+textarea { resize: none; height: 74px; font: 12px "Cascadia Mono", Consolas, monospace; }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+.row { display: flex; gap: 8px; align-items: flex-end; }
+.row > :first-child { flex: 1; }
+button { font: inherit; border: 0; cursor: pointer; border-radius: 9px; padding: 7px 12px; transition: filter .15s, transform .05s, opacity .2s; }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: .45; cursor: default; transform: none; }
-.primary { background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--accent-2)));
-  color: var(--accent-ink); font-weight: 600; }
-.primary:hover:not(:disabled) { filter: brightness(1.07); }
-.big { padding: 13px 16px; font-size: 15px; width: 100%; margin-top: auto; }
-.danger { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); font-weight: 600; }
-.ghost { background: transparent; color: var(--muted); padding: 6px 8px; }
-.ghost:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
+.primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.big { width: 100%; padding: 11px; font-size: 14.5px; border-radius: 11px; }
+.danger { background: color-mix(in srgb, var(--bad) 13%, transparent); color: var(--bad); font-weight: 600; }
 .secondary { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
-.links { display: flex; gap: 4px; flex-wrap: wrap; margin-top: -4px; }
-.note { font-size: 12.5px; color: var(--muted); }
+.link { background: none; color: var(--accent); padding: 2px 4px; font-weight: 600; }
+.link:hover:not(:disabled) { text-decoration: underline; }
+.icon-btn { background: none; color: var(--muted); padding: 5px; border-radius: 7px; display: grid; place-items: center; }
+.icon-btn:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.note { font-size: 12px; color: var(--muted); }
+.sec { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 
-/* Toggle */
-.toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px;
-  border-radius: 10px; background: var(--field); border: 1px solid var(--field-border); }
-.toggle .t { font-size: 13px; } .toggle .t small { display: block; color: var(--muted); font-size: 12px; }
-.switch { position: relative; width: 40px; height: 22px; flex: none; }
+/* Key-value list */
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font: 12.5px "Cascadia Mono", Consolas, monospace; -webkit-user-select: text; user-select: text;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Settings rows */
+.setting { display: flex; align-items: center; gap: 12px; }
+.setting .t { flex: 1; font-size: 13px; } .setting small { display: block; color: var(--muted); font-size: 12px; }
+.setting + .setting { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+.switch { position: relative; width: 36px; height: 20px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider { position: absolute; inset: 0; border-radius: 999px; background: color-mix(in srgb, var(--text) 22%, transparent); transition: .2s; cursor: pointer; }
-.slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: .2s; }
+.slider::before { content: ""; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: .2s; }
 .switch input:checked + .slider { background: var(--accent); }
-.switch input:checked + .slider::before { transform: translateX(18px); }
+.switch input:checked + .slider::before { transform: translateX(16px); }
+.switch input:disabled + .slider { opacity: .5; cursor: default; }
 
 /* Exit-node list */
-.nodes { display: flex; flex-direction: column; gap: 8px; }
-.node { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 11px; cursor: pointer;
-  background: var(--field); border: 1px solid var(--field-border); transition: border-color .15s, background .15s; }
-.node:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--field-border)); }
+.nodes { display: flex; flex-direction: column; gap: 6px; }
+.node { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 10px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--field); transition: border-color .15s, background .15s; }
+.node:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
 .node.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--field)); }
 .node.locked { cursor: default; }
-.node .radio { width: 16px; height: 16px; border-radius: 50%; flex: none; border: 2px solid var(--field-border); }
+.node .radio { width: 15px; height: 15px; border-radius: 50%; flex: none; border: 2px solid var(--field-line); }
 .node.sel .radio { border: 5px solid var(--accent); }
 .node .info { flex: 1; min-width: 0; }
 .node .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node .meta { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node .meta code { font: 12px "Cascadia Mono", Consolas, monospace; }
-.node .live { font-size: 12px; font-weight: 600; color: var(--ok); }
-details.add { border-radius: 11px; border: 1px dashed var(--field-border); padding: 0 12px; }
-details.add[open] { padding-bottom: 12px; }
-details.add summary { cursor: pointer; padding: 10px 0; color: var(--accent); font-weight: 600; list-style: none; }
-details.add summary::-webkit-details-marker { display: none; }
-details.add .field { margin-bottom: 10px; }
-.foot { margin-top: 14px; text-align: center; font-size: 12px; color: var(--muted); }
+.node .meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node .live { font-size: 11.5px; font-weight: 600; color: var(--ok); margin-right: 4px; }
+.node .acts { display: flex; opacity: 0; transition: opacity .15s; }
+.node:hover .acts, .node.sel .acts { opacity: 1; }
+.empty { text-align: center; padding: 14px 8px; color: var(--muted); font-size: 12.5px; border: 1px dashed var(--field-line); border-radius: 10px; }
 
-/* Log */
-details.log { margin-top: 18px; background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: var(--shadow); }
-details.log summary { cursor: pointer; padding: 12px 18px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; }
-details.log summary::-webkit-details-marker { display: none; }
-details.log summary .chev { transition: transform .2s; color: var(--muted); }
-details[open].log summary .chev { transform: rotate(90deg); }
-#log { margin: 0; padding: 0 18px 16px; max-height: 220px; overflow: auto; font: 12px/1.55 "Cascadia Mono", Consolas, monospace;
+/* Collapsibles */
+details.more summary { cursor: pointer; list-style: none; color: var(--muted); font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+details.more summary::-webkit-details-marker, details.log summary::-webkit-details-marker { display: none; }
+details.more summary::before, details.log summary::before { content: "›"; display: inline-block; transition: transform .2s; font-weight: 700; }
+details[open].more summary::before, details[open].log summary::before { transform: rotate(90deg); }
+details.more[open] summary { margin-bottom: 10px; }
+details.log summary { cursor: pointer; list-style: none; font-weight: 600; font-size: 12.5px; color: var(--muted); display: flex; gap: 6px; }
+#log { margin: 8px 0 0; max-height: 180px; overflow: auto; font: 11.5px/1.5 "Cascadia Mono", Consolas, monospace;
   color: var(--muted); white-space: pre-wrap; word-break: break-all; -webkit-user-select: text; user-select: text; }
 #log .WARN { color: var(--warn); } #log .ERROR { color: var(--bad); }
+.foot { text-align: center; font-size: 11.5px; color: var(--muted); }
 
 /* Banner, dialogs, toast */
-.banner { display: none; margin-bottom: 18px; padding: 12px 14px; border-radius: 12px; gap: 10px; align-items: flex-start;
-  background: color-mix(in srgb, var(--bad) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent); }
+.banner { display: none; padding: 10px 12px; border-radius: 11px; gap: 8px; align-items: flex-start; font-size: 13px;
+  background: color-mix(in srgb, var(--bad) 9%, var(--card)); border: 1px solid color-mix(in srgb, var(--bad) 32%, transparent); }
 .banner.show { display: flex; }
 .banner .msg { flex: 1; -webkit-user-select: text; user-select: text; word-break: break-word; }
-dialog { border: 1px solid var(--card-border); border-radius: 16px; padding: 0; background: var(--card); color: var(--text);
-  box-shadow: 0 24px 64px rgba(0,0,0,.35); max-width: 560px; width: calc(100% - 40px); }
+.warnbox { font-size: 12px; padding: 8px 10px; border-radius: 8px; color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--card); color: var(--text);
+  box-shadow: 0 24px 64px rgba(0,0,0,.35); max-width: 440px; width: calc(100% - 32px); }
 dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px); }
-.dlg { padding: 22px; display: flex; flex-direction: column; gap: 14px; }
-.dlg h3 { margin: 0; font: 600 18px "Segoe UI Variable Display", "Segoe UI", sans-serif; }
+.dlg { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.dlg h3 { margin: 0; font: 600 16px "Segoe UI Variable Display", "Segoe UI", sans-serif; }
 .dlg .actions { display: flex; justify-content: flex-end; gap: 8px; }
-.qr { display: flex; gap: 16px; align-items: flex-start; }
-.qr img { width: 168px; height: 168px; border-radius: 10px; background: #fff; padding: 6px; image-rendering: pixelated; flex: none; }
-.qr ol { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
-.qr ol li { margin-bottom: 6px; }
-.warnbox { font-size: 12.5px; padding: 9px 11px; border-radius: 9px; color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 10%, transparent); }
-#toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(20px); opacity: 0;
-  background: var(--text); color: var(--bg); padding: 9px 14px; border-radius: 10px; font-size: 13px; transition: .25s; pointer-events: none; }
+.qr { display: flex; gap: 14px; align-items: center; }
+.qr img { width: 132px; height: 132px; border-radius: 8px; background: #fff; padding: 5px; image-rendering: pixelated; flex: none; }
+.qr ol { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
+.qr ol li { margin-bottom: 4px; }
+#toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%) translateY(16px); opacity: 0; z-index: 9;
+  background: var(--text); color: var(--bg); padding: 8px 13px; border-radius: 9px; font-size: 12.5px; transition: .25s; pointer-events: none; }
 #toast.show { opacity: 1; transform: translateX(-50%); }
-.spin { width: 15px; height: 15px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
-  display: inline-block; animation: s .8s linear infinite; vertical-align: -3px; margin-right: 6px; }
+.spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  display: inline-block; animation: s .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
 @keyframes s { to { transform: rotate(360deg); } }
 [hidden] { display: none !important; }
 </style>
 </head>
 <body>
+<div class="edge l" data-hit="10"></div><div class="edge r" data-hit="11"></div><div class="edge t" data-hit="12"></div><div class="edge b" data-hit="15"></div>
+<div class="edge tl" data-hit="13"></div><div class="edge tr" data-hit="14"></div><div class="edge bl" data-hit="16"></div><div class="edge br" data-hit="17"></div>
 <div class="wrap">
-  <header>
+  <header id="titlebar" title="">
     <div class="logo">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
         <path d="M4 18a8 8 0 0 1 16 0"/><path d="M8 18a4 4 0 0 1 8 0"/><circle cx="12" cy="18" r="1.2" fill="currentColor"/></svg>
     </div>
-    <div>
-      <h1>Backhaul</h1>
-      <div class="sub">Your own private route home</div>
+    <h1>Backhaul <span id="adminBadge" class="badge" hidden>· not administrator</span></h1>
+    <nav class="tabs" role="tablist">
+      <button class="tab" id="tabConnect" role="tab" onclick="showTab('connect')"><span class="dot" id="dotConnect" hidden></span>Connect</button>
+      <button class="tab" id="tabServe" role="tab" onclick="showTab('serve')"><span class="dot" id="dotServe" hidden></span>Share</button>
+    </nav>
+    <div class="winbtns">
+      <button class="winbtn" onclick="bh('minimize')" title="Minimize"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6h8" stroke="currentColor" stroke-width="1.3"/></svg></button>
+      <button class="winbtn close" onclick="bh('hide')" title="Close (keeps running in the tray)"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3"/></svg></button>
     </div>
-    <div class="spacer"></div>
-    <span id="adminBadge" class="badge" hidden>Not running as administrator</span>
   </header>
 
   <div id="banner" class="banner">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--bad)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 7v6M12 17h.01"/></svg>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--bad)" stroke-width="2" style="flex:none;margin-top:1px"><circle cx="12" cy="12" r="10"/><path d="M12 7v6M12 17h.01"/></svg>
     <div class="msg" id="bannerMsg"></div>
-    <button class="ghost" onclick="dismissError()">Dismiss</button>
+    <button class="link" onclick="dismissError()">OK</button>
   </div>
 
-  <section class="hero">
-    <div id="orb" class="orb"></div>
-    <div style="flex:1">
-      <h2 id="heroTitle">Not running</h2>
-      <p id="heroSub">Choose what this PC should do.</p>
-      <div class="stats" id="stats" hidden>
-        <div class="stat">Running for<b id="stUptime">–</b></div>
-        <div class="stat">Last handshake<b id="stHs">–</b></div>
-        <div class="stat">Download speed<b id="stRxRate">–</b></div>
-        <div class="stat">Upload speed<b id="stTxRate">–</b></div>
-        <div class="stat">Received<b id="stRx">–</b></div>
-        <div class="stat">Sent<b id="stTx">–</b></div>
-        <div class="stat" id="stEgressBox" hidden>Public IP<b id="stEgress">–</b></div>
+  <section class="card">
+    <div class="status">
+      <div id="orb" class="orb"></div>
+      <div style="flex:1;min-width:0">
+        <h2 id="heroTitle">Not connected</h2>
+        <p id="heroSub"></p>
       </div>
+    </div>
+    <div class="chips" id="stats" hidden>
+      <span class="chip" id="chipRx" title="Download speed">↓ <b id="stRxRate">–</b></span>
+      <span class="chip" id="chipTx" title="Upload speed">↑ <b id="stTxRate">–</b></span>
+      <span class="chip" title="Running for">⏱ <b id="stUptime">–</b></span>
+      <span class="chip" id="stEgressBox" title="Your public IP now">IP <b id="stEgress">–</b></span>
+      <span class="chip" id="stHsBox" title="Last contact with the other PC">Seen <b id="stHs">–</b></span>
     </div>
   </section>
 
-  <nav class="tabs" role="tablist">
-    <button class="tab" id="tabServe" role="tab" onclick="showTab('serve')"><span class="dot" id="dotServe" hidden></span>Share <small>exit node</small></button>
-    <button class="tab" id="tabConnect" role="tab" onclick="showTab('connect')"><span class="dot" id="dotConnect" hidden></span>Connect <small>client</small></button>
-  </nav>
-
-  <div class="cards">
-    <!-- SERVE -->
-    <article class="card" id="cardServe">
-      <div class="card-head">
-        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg></div>
-        <div><h3>Share</h3><p class="desc">Use this PC as the exit node. Your other PC's traffic leaves the internet from here.</p></div>
+  <!-- CONNECT -->
+  <div class="panel" id="cardConnect">
+    <button class="primary big" id="connectBtn" onclick="toggle('connect')">Connect</button>
+    <section class="card panel" style="gap:10px">
+      <div class="sec">Exit nodes <button class="link" id="addLink" onclick="toggleAdd()">+ Add</button></div>
+      <div class="nodes" id="nodeList"></div>
+      <div class="empty" id="noNodes" hidden>No exit nodes yet.<br>Paste the pairing code from your exit node below.</div>
+      <div id="addBox" class="panel" style="gap:8px" hidden>
+        <textarea id="pairCode" spellcheck="false" placeholder="Paste the pairing code here"></textarea>
+        <div class="row">
+          <input id="nodeName" type="text" placeholder="Name (optional), e.g. Home" spellcheck="false" maxlength="60">
+          <button class="primary" id="importBtn" onclick="importCode()">Save</button>
+        </div>
       </div>
-      <div class="body" id="serveSetup" hidden>
-        <label class="field">Disguise
-          <select id="srvTransport" onchange="updateSetupForm()">
-            <option value="cloudflare">Cloudflare: through your own domain (most robust in China)</option>
-            <option value="reality" selected>REALITY: looks like www.amazon.com</option>
-            <option value="wstunnel">WebSocket over TLS (simple; outside China)</option>
-          </select>
-        </label>
-        <label class="field"><span id="srvHostLabel">This PC's public address (IP or DDNS hostname)</span>
-          <div class="row">
-            <input id="srvHost" type="text" placeholder="e.g. myhome.duckdns.org" spellcheck="false">
-            <button class="secondary" id="detectBtn" onclick="detectIP()" title="Detect my public IP">Detect</button>
-          </div>
-        </label>
-        <label class="field" id="cfTokenBox" hidden>Cloudflare API token
-          <input id="cfToken" type="password" placeholder="paste the token" spellcheck="false" autocomplete="off">
-          <span class="note">Cloudflare dashboard → My Profile → API Tokens → Create Token → Custom token with permissions
-            <b>Zone · Zone · Read</b>, <b>Zone · DNS · Edit</b>, <b>Zone · Zone Settings · Edit</b>, for your domain only. Backhaul creates the DNS
-            record and keeps it pointed at this PC.</span>
-        </label>
-        <label class="field">Port (forward this TCP port on your router)
+    </section>
+    <section class="card" id="connectReady">
+      <div class="setting">
+        <div class="t">Kill switch<small>Block traffic outside the tunnel while connected</small></div>
+        <label class="switch"><input type="checkbox" id="ksToggle" onchange="setKS(this.checked)"><span class="slider"></span></label>
+      </div>
+    </section>
+  </div>
+
+  <!-- SHARE -->
+  <div class="panel" id="cardServe" hidden>
+    <section class="card panel" id="serveSetup" hidden>
+      <div class="sec">Set up this PC as an exit node</div>
+      <label class="field">Disguise
+        <select id="srvTransport" onchange="updateSetupForm()">
+          <option value="cloudflare">Cloudflare — your own domain (best in China)</option>
+          <option value="reality" selected>REALITY — looks like www.amazon.com</option>
+          <option value="wstunnel">WebSocket over TLS (outside China)</option>
+        </select>
+      </label>
+      <label class="field"><span id="srvHostLabel">Public address (IP or DDNS name)</span>
+        <div class="row">
+          <input id="srvHost" type="text" placeholder="e.g. myhome.duckdns.org" spellcheck="false">
+          <button class="secondary" id="detectBtn" onclick="detectIP()" title="Fill in this PC's public IP">Detect</button>
+        </div>
+      </label>
+      <label class="field" id="cfTokenBox" hidden>Cloudflare API token
+        <input id="cfToken" type="password" placeholder="Paste the token" spellcheck="false" autocomplete="off">
+        <span class="note">Cloudflare → My Profile → API Tokens → Create Token → Custom: <b>Zone·Zone·Read</b>, <b>Zone·DNS·Edit</b>,
+          <b>Zone·Zone Settings·Edit</b> for your domain.</span>
+      </label>
+      <details class="more">
+        <summary>Advanced</summary>
+        <label class="field">Port (your router forwards this TCP port to this PC)
           <input id="srvPort" type="number" min="1" max="65535" value="443">
         </label>
-        <button class="primary big" id="setupBtn" onclick="setupServe()">Set up exit node</button>
-      </div>
-      <div class="body" id="serveReady" hidden>
-        <div class="kv">Address <code id="srvAddr"></code></div>
-        <div class="kv">Pairing ID <code id="srvPid"></code> · Disguise <code id="srvTr"></code></div>
+      </details>
+      <button class="primary big" id="setupBtn" onclick="setupServe()">Set up</button>
+    </section>
+
+    <div class="panel" id="serveReady" hidden>
+      <button class="primary big" id="serveBtn" onclick="toggle('serve')">Start sharing</button>
+      <section class="card panel" style="gap:10px">
+        <div class="sec">This exit node <span><button class="link" onclick="showPairing()">Pairing code</button></span></div>
+        <dl class="kv" style="margin:0">
+          <dt>Address</dt><dd id="srvAddr"></dd>
+          <dt>Disguise</dt><dd id="srvTr"></dd>
+          <dt>Pairing ID</dt><dd id="srvPid"></dd>
+        </dl>
         <div class="note" id="srvRouter"></div>
-        <div class="toggle">
-          <div class="t">Start with Windows<small>When you sign in to Windows, Backhaul starts in the tray and starts sharing by itself</small></div>
+      </section>
+      <section class="card">
+        <div class="setting">
+          <div class="t">Start with Windows<small>Start in the tray and share automatically after sign-in</small></div>
           <label class="switch"><input type="checkbox" id="autoToggle" onchange="setAuto(this.checked)"><span class="slider"></span></label>
         </div>
-        <div class="links">
-          <button class="ghost" onclick="showPairing()">Show pairing code</button>
-          <button class="ghost" onclick="confirmReset('serve')">Reset…</button>
+        <div class="setting">
+          <div class="t">Reset exit node<small>New keys; your other PCs need a new pairing code</small></div>
+          <button class="secondary" onclick="confirmReset('serve')">Reset…</button>
         </div>
-        <button class="primary big" id="serveBtn" onclick="toggle('serve')">Start sharing</button>
-      </div>
-    </article>
-
-    <!-- CONNECT -->
-    <article class="card" id="cardConnect">
-      <div class="card-head">
-        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
-        <div><h3>Connect</h3><p class="desc">Send all of this PC's traffic through your exit node, encrypted.</p></div>
-      </div>
-      <div class="body">
-        <div class="nodes" id="nodeList"></div>
-        <div class="note" id="noNodes" hidden>No exit nodes yet. Paste the pairing code from your exit node below.</div>
-        <div id="connectReady" class="body" style="gap:10px">
-          <div class="toggle">
-            <div class="t">Kill switch<small>Block traffic outside the tunnel while connected</small></div>
-            <label class="switch"><input type="checkbox" id="ksToggle" onchange="setKS(this.checked)"><span class="slider"></span></label>
-          </div>
-          <button class="primary big" id="connectBtn" onclick="toggle('connect')">Connect</button>
-        </div>
-        <details class="add" id="addBox">
-          <summary>+ Add an exit node</summary>
-          <label class="field">Name (optional)
-            <input id="nodeName" type="text" placeholder="e.g. Home, Office" spellcheck="false" maxlength="60">
-          </label>
-          <label class="field">Pairing code from the exit node
-            <textarea id="pairCode" spellcheck="false" placeholder="Paste the pairing code here"></textarea>
-          </label>
-          <button class="primary" id="importBtn" onclick="importCode()">Save exit node</button>
-        </details>
-      </div>
-    </article>
+      </section>
+    </div>
   </div>
 
   <details class="log" id="logBox">
-    <summary><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 6l6 6-6 6"/></svg>Activity</summary>
+    <summary>Activity</summary>
     <pre id="log"></pre>
   </details>
-  <div class="foot">Closing this window keeps Backhaul running in the tray (bottom-right of the taskbar). To exit, right-click the tray icon → Quit.</div>
+  <div class="foot">Closing the window keeps Backhaul running in the tray. Right-click the tray icon → Quit to exit.</div>
 </div>
 
 <dialog id="renameDlg">
@@ -340,13 +322,13 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
     <div class="qr">
       <img id="pairQR" alt="Pairing QR code">
       <ol>
-        <li>Copy this code (or scan it with your phone).</li>
-        <li>On the other PC, open Backhaul → <b>Connect</b> → paste it → <b>Save pairing</b>.</li>
-        <li>Click <b>Start sharing</b> here, then <b>Connect</b> there.</li>
+        <li>Copy this code.</li>
+        <li>On the other PC: Backhaul → <b>Connect</b> → <b>+ Add</b> → paste → <b>Save</b>.</li>
+        <li><b>Start sharing</b> here, then <b>Connect</b> there.</li>
       </ol>
     </div>
     <textarea id="pairText" readonly></textarea>
-    <div class="warnbox">This code contains the other PC's private key. Only send it over a channel you trust, and don't share screenshots.</div>
+    <div class="warnbox">This code contains a private key. Send it only over a channel you trust.</div>
     <div class="actions">
       <button class="secondary" onclick="copyPairing()">Copy</button>
       <button class="primary" onclick="pairDlg.close()">Done</button>
@@ -369,10 +351,13 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
 
 <script>
 const $ = (id) => document.getElementById(id);
-let S = null, logSeq = 0, busy = {};
+let S = null, logSeq = 0, busy = {}, tab = '', nodesKey = '';
+const ICON_EDIT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const ICON_DEL = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>';
 
 function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2200); }
 function human(n) { if (!n) return '0 B'; const u = ['B','KB','MB','GB','TB']; let i = 0; while (n >= 1024 && i < u.length-1) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + ' ' + u[i]; }
+function shortDur(d) { return (d || '').replace(/(\d+)\.\d+s$/, '$1s').replace(/^(\d+h\d+m)\d+s$/, '$1'); }
 async function call(m, ...a) { try { return await bh(m, ...a); } catch (e) { showError(e.message); throw e; } }
 function showError(m) { $('bannerMsg').textContent = m; $('banner').classList.add('show'); }
 async function dismissError() { $('banner').classList.remove('show'); await bh('clearError').catch(()=>{}); }
@@ -381,80 +366,79 @@ function setBusy(btn, on, label) {
   if (on) { b._label = b._label || b.textContent; b.innerHTML = '<span class="spin"></span>' + (label || b._label); b.disabled = true; busy[btn] = true; }
   else { if (b._label) b.textContent = b._label; b._label = null; b.disabled = false; delete busy[btn]; }
 }
+const trName = (t) => ({ reality: 'REALITY', cloudflare: 'Cloudflare' })[t] || 'WebSocket/TLS';
 
 function render(s) {
   S = s;
   $('adminBadge').hidden = s.admin;
   if (s.error) showError(s.error);
+  if (!tab) showTab(s.running || localStorage.getItem('tab') || (s.serve.configured && !s.nodes.length ? 'serve' : 'connect'));
+  $('dotServe').hidden = s.running !== 'serve'; $('dotConnect').hidden = s.running !== 'connect';
 
-  // Hero
+  // Status card
+  const serving = s.running === 'serve';
+  const sel = s.nodes.find(n => n.selected);
+  const via = sel ? 'via ' + (sel.name || sel.endpoint) : '';
+  const idle = tab === 'serve'
+    ? ['Not sharing', s.serve.configured ? 'Start sharing so your other PC can connect.' : 'Set this PC up as an exit node below.']
+    : ['Not connected', s.nodes.length ? 'Choose an exit node and click Connect.' : 'Add an exit node to get started.'];
+  const T = { idle,
+    starting: [serving ? 'Starting…' : 'Connecting…', serving ? 'Preparing the exit node.' : via],
+    waiting: ['Sharing', 'Waiting for your other PC to connect.'],
+    up: [serving ? 'Sharing' : 'Connected', serving ? 'Your other PC is connected.' : via],
+    reconnecting: ['Reconnecting…', 'The tunnel dropped; getting it back.'],
+    stopping: ['Stopping…', 'Restoring your network settings.'] };
+  const [title, sub] = T[s.phase] || T.idle;
+  $('heroTitle').textContent = title; $('heroSub').textContent = sub; $('heroSub').hidden = !sub;
   const orb = $('orb'); orb.className = 'orb';
-  const role = s.running === 'serve' ? 'Sharing' : 'Connected';
-  const T = { idle: ['Not running', 'Choose what this PC should do.'],
-              starting: [s.running === 'serve' ? 'Starting exit node…' : 'Connecting…', 'Setting up the encrypted tunnel.'],
-              waiting: ['Sharing', 'Ready — waiting for your other PC to connect.'],
-              up: [role, s.running === 'serve' ? 'Your other PC is connected through this one.' : 'All traffic goes through your exit node.'],
-              reconnecting: ['Reconnecting…', 'The tunnel dropped. Kill switch keeps traffic blocked meanwhile.'],
-              stopping: ['Stopping…', 'Restoring your network settings.'] };
-  let [title, sub] = T[s.phase] || T.idle;
-  $('heroTitle').textContent = title; $('heroSub').textContent = sub;
   if (s.phase === 'up') orb.classList.add('up');
   else if (s.phase === 'waiting') orb.classList.add('wait');
   else if (s.phase !== 'idle') orb.classList.add('busy');
   else if (s.error) orb.classList.add('bad');
   $('stats').hidden = !s.running;
-  $('stUptime').textContent = s.uptime || '–';
-  $('stHs').textContent = s.handshake || 'none yet';
-  $('stRx').textContent = human(s.rx); $('stTx').textContent = human(s.tx);
+  $('stUptime').textContent = shortDur(s.uptime) || '–';
   $('stRxRate').textContent = human(s.rxRate) + '/s'; $('stTxRate').textContent = human(s.txRate) + '/s';
-  $('stEgressBox').hidden = s.running !== 'connect';
-  $('stEgress').textContent = s.egress || 'checking…';
+  $('chipRx').title = 'Download speed · ' + human(s.rx) + ' received'; $('chipTx').title = 'Upload speed · ' + human(s.tx) + ' sent';
+  $('stEgressBox').hidden = s.running !== 'connect'; $('stEgress').textContent = s.egress || '…';
+  $('stHsBox').hidden = !serving; $('stHs').textContent = s.handshake || 'not yet';
 
-  // Serve card
+  // Share
   $('serveSetup').hidden = s.serve.configured; $('serveReady').hidden = !s.serve.configured;
   $('srvAddr').textContent = s.serve.endpoint ? s.serve.endpoint + ':' + s.serve.port : '';
-  const port = s.serve.port || 443, lan = s.serve.lanIp ? ' (' + s.serve.lanIp + ')' : '';
-  $('srvRouter').textContent = (s.running === 'serve' && s.router) ? s.router
-    : 'Your router must forward TCP ' + port + ' to this PC' + lan + '. Backhaul tries to set this up automatically (UPnP) when you start sharing.';
-  $('srvRouter').className = 'note' + (/carrier-grade|didn.t work/.test(s.router || '') && s.running === 'serve' ? ' warnbox' : '');
-  $('srvPid').textContent = s.serve.pairingId || '–';
   $('srvTr').textContent = trName(s.serve.transport);
-  $('cardServe').classList.toggle('active', s.running === 'serve');
+  $('srvPid').textContent = s.serve.pairingId || '–';
+  const lan = s.serve.lanIp ? ' (' + s.serve.lanIp + ')' : '';
+  $('srvRouter').textContent = (serving && s.router) ? s.router
+    : 'Your router must forward TCP ' + (s.serve.port || 443) + ' to this PC' + lan + '. Backhaul tries to do this automatically (UPnP).';
+  $('srvRouter').className = 'note' + (/carrier-grade|didn.t work/.test(s.router || '') && serving ? ' warnbox' : '');
   const sb = $('serveBtn');
   if (!busy.serveBtn) {
-    sb.textContent = s.running === 'serve' ? (s.phase === 'stopping' ? 'Stopping…' : 'Stop sharing') : 'Start sharing';
-    sb.className = 'big ' + (s.running === 'serve' ? 'danger' : 'primary');
-    sb.disabled = (s.running && s.running !== 'serve') || s.phase === 'stopping';
+    sb.textContent = serving ? (s.phase === 'stopping' ? 'Stopping…' : 'Stop sharing') : 'Start sharing';
+    sb.className = 'big ' + (serving ? 'danger' : 'primary');
+    sb.disabled = (s.running && !serving) || s.phase === 'stopping';
   }
 
-  // Tabs
-  if (!tab) showTab(localStorage.getItem('tab') || (s.running || (s.serve.configured && !s.nodes.length) ? (s.running || 'serve') : 'connect'));
-  $('dotServe').hidden = s.running !== 'serve'; $('dotConnect').hidden = s.running !== 'connect';
-
-  // Connect card: the exit-node list
+  // Connect
   renderNodes(s);
-  $('connectReady').hidden = !s.connect.configured;
+  $('connectReady').hidden = !s.nodes.length;
   $('ksToggle').checked = s.connect.killswitch; $('ksToggle').disabled = !!s.running;
-  $('cardConnect').classList.toggle('active', s.running === 'connect');
-  const cb = $('connectBtn');
+  const cb = $('connectBtn'), connected = s.running === 'connect';
   if (!busy.connectBtn) {
-    cb.textContent = s.running === 'connect' ? (s.phase === 'stopping' ? 'Disconnecting…' : 'Disconnect') : 'Connect';
-    cb.className = 'big ' + (s.running === 'connect' ? 'danger' : 'primary');
-    cb.disabled = (s.running && s.running !== 'connect') || s.phase === 'stopping';
+    cb.textContent = connected ? (s.phase === 'stopping' ? 'Disconnecting…' : 'Disconnect') : 'Connect';
+    cb.className = 'big ' + (connected ? 'danger' : 'primary');
+    cb.disabled = !s.connect.configured || (s.running && !connected) || s.phase === 'stopping';
   }
   for (const e of [s.serve, s.connect]) if (e.configError) showError('Config problem: ' + e.configError);
 }
 
-let tab = '';
 function showTab(t) {
   tab = t === 'serve' ? 'serve' : 'connect';
   try { localStorage.setItem('tab', tab); } catch (e) {}
   $('tabServe').classList.toggle('on', tab === 'serve'); $('tabConnect').classList.toggle('on', tab === 'connect');
   $('cardServe').hidden = tab !== 'serve'; $('cardConnect').hidden = tab !== 'connect';
+  if (S) render(S);
 }
 
-const trName = (t) => ({ reality: 'REALITY', cloudflare: 'Cloudflare' })[t] || 'wstunnel';
-let nodesKey = '';
 function renderNodes(s) {
   const connecting = s.running === 'connect';
   const key = JSON.stringify([s.nodes, connecting, s.phase === 'up']);
@@ -464,31 +448,33 @@ function renderNodes(s) {
   for (const n of s.nodes) {
     const row = document.createElement('div');
     row.className = 'node' + (n.selected ? ' sel' : '') + (connecting ? ' locked' : '');
-    row.title = connecting ? '' : 'Use this exit node';
     row.onclick = () => { if (!connecting && !n.selected) pickNode(n.id); };
     const radio = document.createElement('div'); radio.className = 'radio';
     const info = document.createElement('div'); info.className = 'info';
     const name = document.createElement('div'); name.className = 'name'; name.textContent = n.name || n.endpoint;
     const meta = document.createElement('div'); meta.className = 'meta';
-    meta.textContent = n.configError ? 'Problem: ' + n.configError
-      : (n.endpoint + ':' + n.port + ' · ' + trName(n.transport) + (n.pairingId ? ' · ID ' + n.pairingId : ''));
+    meta.textContent = n.configError ? 'Problem: ' + n.configError : n.endpoint + ' · ' + trName(n.transport);
+    meta.title = n.pairingId ? 'Pairing ID ' + n.pairingId : '';
     info.append(name, meta);
     row.append(radio, info);
     if (connecting && n.selected) {
       const live = document.createElement('span'); live.className = 'live';
       live.textContent = s.phase === 'up' ? 'Connected' : 'Connecting…'; row.append(live);
     }
-    const ren = document.createElement('button'); ren.className = 'ghost'; ren.textContent = 'Rename';
+    const acts = document.createElement('div'); acts.className = 'acts';
+    const ren = document.createElement('button'); ren.className = 'icon-btn'; ren.innerHTML = ICON_EDIT; ren.title = 'Rename';
     ren.onclick = (e) => { e.stopPropagation(); renameNode(n); };
-    const del = document.createElement('button'); del.className = 'ghost'; del.textContent = 'Remove';
+    const del = document.createElement('button'); del.className = 'icon-btn'; del.innerHTML = ICON_DEL; del.title = 'Remove';
     del.disabled = connecting && n.selected;
     del.onclick = (e) => { e.stopPropagation(); confirmRemove(n); };
-    row.append(ren, del);
+    acts.append(ren, del); row.append(acts);
     list.append(row);
   }
   $('noNodes').hidden = s.nodes.length > 0;
-  if (!s.nodes.length) $('addBox').open = true;
+  if (!s.nodes.length) $('addBox').hidden = false;
+  $('addLink').hidden = !s.nodes.length;
 }
+function toggleAdd() { const b = $('addBox'); b.hidden = !b.hidden; if (!b.hidden) $('pairCode').focus(); }
 async function pickNode(id) { try { await call('selectNode', id); } catch (e) {} nodesKey = ''; refresh(); }
 function renameNode(n) {
   $('renameInput').value = n.name || '';
@@ -497,7 +483,7 @@ function renameNode(n) {
 }
 function confirmRemove(n) {
   $('confirmTitle').textContent = 'Remove "' + (n.name || n.endpoint) + '"?';
-  $('confirmText').textContent = 'This forgets this exit node and its keys. You will need its pairing code to add it again.';
+  $('confirmText').textContent = 'You will need its pairing code to add it again.';
   $('confirmOk').textContent = 'Remove';
   $('confirmOk').onclick = async () => { $('confirmDlg').close(); try { await call('removeNode', n.id); toast('Removed'); } catch (e) {} nodesKey = ''; refresh(); };
   $('confirmDlg').showModal();
@@ -505,7 +491,7 @@ function confirmRemove(n) {
 async function loadAuto() { try { $('autoToggle').checked = await bh('getAutostart'); } catch (e) {} }
 async function setAuto(on) {
   $('autoToggle').disabled = true;
-  try { await call('setAutostart', on); toast(on ? 'Backhaul will start with Windows and share automatically' : 'Backhaul won’t start with Windows'); }
+  try { await call('setAutostart', on); toast(on ? 'Will start with Windows and share' : 'Won’t start with Windows'); }
   catch (e) { $('autoToggle').checked = !on; }
   $('autoToggle').disabled = false;
 }
@@ -528,8 +514,8 @@ async function refresh() {
 
 function updateSetupForm() {
   const cf = $('srvTransport').value === 'cloudflare';
-  $('srvHostLabel').textContent = cf ? 'Your hostname on Cloudflare (e.g. vpn.yourdomain.com)' : "This PC's public address (IP or DDNS hostname)";
-  $('srvHost').placeholder = cf ? 'vpn.yourdomain.com' : 'e.g. myhome.duckdns.org';
+  $('srvHostLabel').textContent = cf ? 'Hostname on Cloudflare' : 'Public address (IP or DDNS name)';
+  $('srvHost').placeholder = cf ? 'e.g. cdn.yourdomain.com' : 'e.g. myhome.duckdns.org';
   $('detectBtn').hidden = cf;
   $('cfTokenBox').hidden = !cf;
   if (cf) $('srvPort').value = '443';
@@ -548,7 +534,7 @@ function openPairing(p) { $('pairText').value = p.code; $('pairQR').src = p.qr |
 function copyPairing() { const t = $('pairText'); t.removeAttribute('readonly'); t.select(); document.execCommand('copy'); t.setAttribute('readonly', ''); t.setSelectionRange(0, 0); toast('Pairing code copied'); }
 async function importCode() {
   setBusy('importBtn', true, 'Saving…');
-  try { await call('addNode', $('pairCode').value, $('nodeName').value); $('pairCode').value = ''; $('nodeName').value = ''; $('addBox').open = false; toast('Exit node saved'); nodesKey = ''; await refresh(); }
+  try { await call('addNode', $('pairCode').value, $('nodeName').value); $('pairCode').value = ''; $('nodeName').value = ''; $('addBox').hidden = true; toast('Exit node saved'); nodesKey = ''; await refresh(); }
   catch (e) {} finally { setBusy('importBtn', false); }
 }
 async function setKS(on) { try { await call('setKillSwitch', on); toast(on ? 'Kill switch on' : 'Kill switch off'); } catch (e) {} refresh(); }
@@ -561,17 +547,22 @@ async function toggle(role) {
   refresh();
 }
 function confirmReset(role) {
-  $('confirmTitle').textContent = role === 'serve' ? 'Reset exit node?' : 'Forget this exit node?';
-  $('confirmText').textContent = role === 'serve'
-    ? 'This deletes the exit node keys and certificate. Your other PC will need a new pairing code.'
-    : 'This removes the pairing. You will need a new pairing code to connect again.';
+  $('confirmTitle').textContent = 'Reset this exit node?';
+  $('confirmText').textContent = 'This deletes its keys and certificate. Your other PCs will need a new pairing code.';
   $('confirmOk').textContent = 'Reset';
   $('confirmOk').onclick = async () => { $('confirmDlg').close(); try { await call('reset', role); toast('Reset'); } catch (e) {} refresh(); };
   $('confirmDlg').showModal();
 }
 
-document.addEventListener('contextmenu', (e) => { if (!e.target.closest('textarea, input, pre, code')) e.preventDefault(); });
-refresh(); setInterval(refresh, 1000); loadAuto();
+// Moving and resizing the frameless window: hand the press to Windows.
+document.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  const edge = e.target.closest('.edge');
+  if (edge) { e.preventDefault(); bh('drag', +edge.dataset.hit); return; }
+  if (e.target.closest('#titlebar') && !e.target.closest('button, input, a')) { e.preventDefault(); bh('drag', 2); }
+});
+document.addEventListener('contextmenu', (e) => { if (!e.target.closest('textarea, input, pre, dd')) e.preventDefault(); });
+refresh().then(() => setTimeout(() => bh('ready').catch(() => {}), 50)); setInterval(refresh, 1000); loadAuto();
 </script>
 </body>
 </html>

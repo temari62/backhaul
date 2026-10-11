@@ -94,25 +94,28 @@ func main() {
 	}
 	cancelRecover()
 
+	unhook := hookMainWindow() // frameless and hidden from the first moment
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		AutoFocus: true,
 		DataPath:  filepath.Join(dataDir, "WebView2"),
 		WindowOptions: webview2.WindowOptions{
-			Title: windowTitle, Width: 1000, Height: 780, IconId: 1, Center: true,
+			Title: windowTitle, Width: 560, Height: 600, IconId: 1, Center: true,
 		},
 	})
+	unhook()
 	if w == nil {
 		fatal("Backhaul needs the Microsoft Edge WebView2 Runtime.\n\nInstall it from:\nhttps://go.microsoft.com/fwlink/p/?LinkId=2124703\n\nthen start Backhaul again.")
 	}
 	defer w.Destroy()
-	w.SetSize(1000, 780, webview2.HintNone)
-	w.SetSize(760, 640, webview2.HintMin)
+	w.SetSize(544, 561, webview2.HintNone) // + frame allowance = 560×600 (the frame itself is hidden)
+	w.SetSize(440, 420, webview2.HintMin)
 	hwnd := uintptr(w.Window())
 	applyTitleBarTheme(windows.HWND(hwnd))
-	closeToTray(hwnd)
+	customFrame(hwnd)
 	runTray(w, backend)
 	if launchedByAutostart() {
-		procShowWindow.Call(hwnd, 0 /* SW_HIDE */) // start in the tray
+		procShowWindow.Call(hwnd, swHide) // start in the tray
+		uncloak(hwnd)
 		if backend.State().Serve.Configured {
 			go func() {
 				if err := backend.Start(gui.RoleServe); err != nil {
@@ -122,6 +125,12 @@ func main() {
 		}
 	} else {
 		go refreshAutostart()
+		// Show once the page has drawn (it calls "ready"), or after 3s regardless.
+		time.AfterFunc(3*time.Second, func() {
+			if startHidden.Load() {
+				w.Dispatch(func() { showMain(hwnd) })
+			}
+		})
 	}
 
 	ui := &rpc{w: w, b: backend}
@@ -263,8 +272,20 @@ func (r *rpc) dispatch(method string, a []json.RawMessage) (any, error) {
 		return autostartEnabled()
 	case "setAutostart":
 		return nil, setAutostart(flag(0))
+	case "ready":
+		if startHidden.Load() {
+			r.w.Dispatch(func() { showMain(uintptr(r.w.Window())) })
+		}
+		return nil, nil
 	case "hide":
-		r.w.Dispatch(func() { procShowWindow.Call(uintptr(r.w.Window()), 0) })
+		r.w.Dispatch(func() { procShowWindow.Call(uintptr(r.w.Window()), swHide) })
+		return nil, nil
+	case "minimize":
+		r.w.Dispatch(func() { procShowWindow.Call(uintptr(r.w.Window()), swMinimize) })
+		return nil, nil
+	case "drag":
+		hit := num(0)
+		r.w.Dispatch(func() { beginDrag(uintptr(r.w.Window()), hit) })
 		return nil, nil
 	case "clearError":
 		r.b.ClearError()
