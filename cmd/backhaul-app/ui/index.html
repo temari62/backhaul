@@ -295,7 +295,7 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
     <summary>Activity</summary>
     <pre id="log"></pre>
   </details>
-  <div class="foot">Closing the window keeps Backhaul running in the tray. Right-click the tray icon → Quit to exit.</div>
+  <div class="foot" id="footNote">Closing the window keeps Backhaul running in the tray. Right-click the tray icon → Quit to exit.</div>
 </div>
 
 <dialog id="settingsDlg">
@@ -309,6 +309,14 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
       <div class="setting" id="connectReady">
         <div class="t">Kill switch<small id="ksNote">When connected, block traffic outside the tunnel</small></div>
         <label class="switch"><input type="checkbox" id="ksToggle" onchange="setKS(this.checked)"><span class="slider"></span></label>
+      </div>
+      <div class="setting">
+        <div class="t">Stealth mode<small>Hide the tray icon. Backhaul keeps running in the background; start Backhaul again to open this window.</small></div>
+        <label class="switch"><input type="checkbox" id="stealthToggle" onchange="setStealth(this.checked)"><span class="slider"></span></label>
+      </div>
+      <div class="setting">
+        <div class="t">Quit Backhaul<small>Stop sharing or connecting, restore the network and exit</small></div>
+        <button class="danger" onclick="quitApp()">Quit</button>
       </div>
     </div>
     <div class="actions"><button class="primary" onclick="settingsDlg.close()">Done</button></div>
@@ -497,7 +505,19 @@ function renderNodes(s) {
   $('cancelAddBtn').hidden = !s.nodes.length;
 }
 function cancelAdd() { $('pairCode').value = ''; $('nodeName').value = ''; $('addBox').hidden = true; }
-function openSettings() { loadAuto(); $('settingsDlg').showModal(); }
+function openSettings() { loadAuto(); loadStealth(); $('settingsDlg').showModal(); }
+function showStealth(on) {
+  $('stealthToggle').checked = on;
+  $('footNote').textContent = on
+    ? 'Stealth mode: closing the window keeps Backhaul running in the background. Start Backhaul again to reopen it.'
+    : 'Closing the window keeps Backhaul running in the tray. Right-click the tray icon → Quit to exit.';
+}
+async function loadStealth() { try { showStealth(await bh('getStealth')); } catch (e) {} }
+async function setStealth(on) {
+  try { await call('setStealth', on); showStealth(on); toast(on ? 'Tray icon hidden' : 'Tray icon shown'); }
+  catch (e) { $('stealthToggle').checked = !on; }
+}
+async function quitApp() { settingsDlg.close(); toast('Restoring your network and quitting…'); try { await bh('quit'); } catch (e) {} }
 function toggleAdd() { const b = $('addBox'); b.hidden = !b.hidden; if (!b.hidden) $('pairCode').focus(); }
 async function pickNode(id) { try { await call('selectNode', id); } catch (e) {} nodesKey = ''; refresh(); }
 function renameNode(n) {
@@ -586,7 +606,7 @@ document.addEventListener('mousedown', (e) => {
   if (e.target.closest('#titlebar') && !e.target.closest('button, input, a')) { e.preventDefault(); bh('drag', 2); }
 });
 document.addEventListener('contextmenu', (e) => { if (!e.target.closest('textarea, input, pre, dd')) e.preventDefault(); });
-refresh().then(() => setTimeout(() => bh('ready').catch(() => {}), 50)); setInterval(refresh, 1000); loadAuto();
+refresh().then(() => setTimeout(() => bh('ready').catch(() => {}), 50)); setInterval(refresh, 1000); loadAuto(); loadStealth();
 </script>
 </body>
 </html>

@@ -63,6 +63,7 @@ func main() {
 		return
 	}
 	dataDir := appDataDir()
+	stealth.Store(loadSettings(dataDir).Stealth)
 	logs := setupLogging(dataDir)
 
 	wstPath, xrayPath, err := installBundle(dataDir)
@@ -272,6 +273,13 @@ func (r *rpc) dispatch(method string, a []json.RawMessage) (any, error) {
 		return nil, r.b.RenameNode(str(0), str(1))
 	case "removeNode":
 		return nil, r.b.RemoveNode(str(0))
+	case "getStealth":
+		return stealth.Load(), nil
+	case "setStealth":
+		return nil, setStealth(flag(0))
+	case "quit":
+		quitApp()
+		return nil, nil
 	case "getAutostart":
 		return autostartEnabled()
 	case "setAutostart":

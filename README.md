@@ -71,7 +71,10 @@ Other things to know:
   - Click the tray icon to open the window again.
   - Right-click it → **Quit** to stop, restore your network and exit.
   - The icon's colour shows the status.
-- **Start with Windows** (Share tab). Backhaul starts in the tray when you sign in and starts
+- **Stealth mode** (⚙ Settings). Hides the tray icon while Backhaul keeps running.
+  - To reopen the window, start `Backhaul.exe` again.
+  - To exit, use **Quit Backhaul** in Settings.
+- **Start with Windows** (⚙ Settings). Backhaul starts in the tray when you sign in and starts
   sharing by itself.
   - It's a scheduled task named "Backhaul" that runs with administrator rights, so there's no
     permission prompt at every sign-in.

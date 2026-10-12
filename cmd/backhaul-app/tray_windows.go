@@ -205,12 +205,16 @@ func showWindow(hwnd uintptr) {
 
 // runTray shows the tray icon (on its own OS thread with its own message
 // loop) until quit is requested from its menu.
+// quitApp ends Backhaul (the network is restored on the way out).
+var quitApp = func() {}
+
 func runTray(w webview2.WebView, b *gui.Backend) {
 	hwnd := uintptr(w.Window())
 	quit := func() {
 		quitting.Store(true)
 		w.Dispatch(w.Terminate)
 	}
+	quitApp = quit
 	go func() {
 		runtime.LockOSThread()
 		systray.Run(func() {
@@ -222,6 +226,7 @@ func runTray(w webview2.WebView, b *gui.Backend) {
 			systray.AddSeparator()
 			open := systray.AddMenuItem("Open Backhaul", "Show the window")
 			exit := systray.AddMenuItem("Quit", "Stop sharing/connecting, restore the network and exit")
+			applyTrayVisibility() // stealth mode: hide it right away
 			go func() {
 				for {
 					select {
@@ -235,7 +240,10 @@ func runTray(w webview2.WebView, b *gui.Backend) {
 			}()
 			go func() {
 				last := ""
-				for !quitting.Load() {
+				for tick := 1; !quitting.Load(); tick++ {
+					if tick%5 == 0 {
+						applyTrayVisibility() // Explorer restarts re-add the icon
+					}
 					text, phase := trayStatus(b.State())
 					if text != last {
 						systray.SetIcon(tray.Icon(phase))
