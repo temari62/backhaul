@@ -21,11 +21,11 @@ import (
 )
 
 // userspaceClient is a full Backhaul client that changes nothing on the host:
-// pinned-TLS proxy + real wstunnel client + wireguard-go on its own netstack.
+// pinned-TLS proxy + built-in tunnel client + wireguard-go on its own netstack.
 type userspaceClient struct {
 	net   *wgnetstack.Net
 	dev   *device.Device
-	tr    *transport.Wstunnel
+	tr    transport.Transport
 	proxy *tlspin.Proxy
 }
 
@@ -38,9 +38,10 @@ func startUserspaceClient(t *testing.T, ctx context.Context, cc *config.Config, 
 	}
 	go proxy.Serve(ctx)
 	localUDP := "127.0.0.1:" + strconv.Itoa(freePort(t, "udp"))
-	tr := transport.NewWstunnel(transport.WstunnelOptions{Binary: wst, Role: transport.RoleClient,
-		ServerURL: "ws://" + proxy.Addr(), LocalUDP: localUDP, RemoteUDP: "127.0.0.1:" + strconv.Itoa(cc.Transport.RemoteUDPPort),
-		PathPrefix: cc.Transport.PathPrefix, ReadyTimeout: 15 * time.Second, BackoffMin: 200 * time.Millisecond, BackoffMax: 2 * time.Second})
+	// The built-in tunnel client, as Connect uses by default.
+	tr := transport.NewWSClient(transport.WSClientOptions{ServerAddr: proxy.Addr(), LocalUDP: localUDP,
+		RemoteUDP: "127.0.0.1:" + strconv.Itoa(cc.Transport.RemoteUDPPort), PathPrefix: cc.Transport.PathPrefix,
+		BackoffMin: 200 * time.Millisecond, BackoffMax: 2 * time.Second})
 	if err := tr.Start(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -108,8 +108,12 @@ type Transport struct {
 	// addresses to use instead of the automatic pool (the hostname's own
 	// addresses plus others from Cloudflare's ranges). Useful if DNS is
 	// tampered with or particular addresses work best on your network.
-	EdgeIP       string   `toml:"edge_ip,omitempty"`
-	EdgeIPs      []string `toml:"edge_ips,omitempty"`
+	EdgeIP  string   `toml:"edge_ip,omitempty"`
+	EdgeIPs []string `toml:"edge_ips,omitempty"`
+	// Client (client side, wstunnel and cloudflare kinds) picks the tunnel
+	// client: "" = built into Backhaul (default), "wstunnel" = run
+	// wstunnel.exe as before.
+	Client       string   `toml:"client,omitempty"`
 	DialTimeout  Duration `toml:"dial_timeout"`
 	ReadyTimeout Duration `toml:"ready_timeout"`
 	BackoffMin   Duration `toml:"backoff_min"`
@@ -125,6 +129,9 @@ const (
 	// breaking a large part of the web, and Cloudflare forwards to the exit node.
 	TransportCloudflare = "cloudflare"
 )
+
+// ClientWstunnel selects the external wstunnel program as the tunnel client.
+const ClientWstunnel = "wstunnel"
 
 // Reality configures the REALITY transport. The exit node impersonates
 // ServerName (a real HTTPS site); unauthenticated visitors are relayed to

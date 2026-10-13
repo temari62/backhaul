@@ -80,4 +80,10 @@ func TestSetupServeCloudflareEndToEnd(t *testing.T) {
 	if csec.DDNSToken != "" || len(raw) == 0 || strings.Contains(string(raw), "cf-secret-token-123") {
 		t.Fatal("the Cloudflare token must never reach the client")
 	}
+	// The pairing ID shown on both PCs must match, so users can tell they
+	// picked the right exit node.
+	v := b.State()
+	if v.Serve.PairingID == "" || len(v.Nodes) != 1 || v.Nodes[0].PairingID != v.Serve.PairingID || v.Nodes[0].Port != 443 {
+		t.Fatalf("pairing ID/port differ: exit node %q, client %+v", v.Serve.PairingID, v.Nodes)
+	}
 }

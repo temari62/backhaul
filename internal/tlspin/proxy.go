@@ -181,11 +181,17 @@ const closeTimeout = 2 * time.Second
 
 // Close stops listening and tears down active connections.
 func (p *Proxy) Close() error {
+	// Close outside the lock and without waiting: on some Windows hosts a
+	// Close blocks while I/O is pending, which would freeze every handler.
 	p.mu.Lock()
+	conns := make([]net.Conn, 0, len(p.conns))
 	for c := range p.conns {
-		c.Close()
+		conns = append(conns, c)
 	}
 	p.mu.Unlock()
+	for _, c := range conns {
+		go c.Close()
+	}
 	errc := make(chan error, 1)
 	go func() { errc <- p.ln.Close() }()
 	select {

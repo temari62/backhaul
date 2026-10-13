@@ -482,8 +482,9 @@ function renderNodes(s) {
     const info = document.createElement('div'); info.className = 'info';
     const name = document.createElement('div'); name.className = 'name'; name.textContent = n.name || n.endpoint;
     const meta = document.createElement('div'); meta.className = 'meta';
-    meta.textContent = n.configError ? 'Problem: ' + n.configError : n.endpoint + ' · ' + trName(n.transport);
-    meta.title = n.pairingId ? 'Pairing ID ' + n.pairingId : '';
+    meta.textContent = n.configError ? 'Problem: ' + n.configError
+      : n.endpoint + ':' + n.port + ' · ' + trName(n.transport) + (n.pairingId ? ' · ID ' + n.pairingId : '');
+    meta.title = n.pairingId ? 'Pairing ID ' + n.pairingId + ' — it must match the one shown on the exit node (Share tab)' : '';
     info.append(name, meta);
     row.append(radio, info);
     if (connecting && n.selected) {

@@ -259,10 +259,6 @@ func (e *Env) connectTransport(ctx context.Context, cl *cleanup, host string, po
 	}
 
 	// wstunnel: pinned-TLS proxy + wstunnel client.
-	wstPath, err := transport.EnsureWstunnel(ctx, c, e.Paths.Bin())
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	dialTimeout := c.Transport.DialTimeout.Duration
 	if c.Transport.Kind == config.TransportCloudflare && dialTimeout > cloudflareDialTimeout {
 		dialTimeout = cloudflareDialTimeout
@@ -277,6 +273,22 @@ func (e *Env) connectTransport(ctx context.Context, cl *cleanup, host string, po
 	hostHeader := ""
 	if c.Transport.Kind == config.TransportCloudflare {
 		hostHeader = host // Cloudflare routes by Host; wstunnel itself dials our local proxy
+	}
+	if c.Transport.Client != config.ClientWstunnel {
+		// Built-in client (default): no wstunnel.exe on this PC.
+		tr := transport.NewWSClient(transport.WSClientOptions{
+			ServerAddr: proxy.Addr(), HostHeader: hostHeader, PathPrefix: c.Transport.PathPrefix,
+			LocalUDP: localUDP, RemoteUDP: remoteUDP, DialTimeout: dialTimeout,
+			BackoffMin: c.Transport.BackoffMin.Duration, BackoffMax: c.Transport.BackoffMax.Duration,
+		})
+		if err := tr.Start(ctx); err != nil {
+			return nil, nil, nil, err
+		}
+		return tr, proxy.Down, nil, nil
+	}
+	wstPath, err := transport.EnsureWstunnel(ctx, c, e.Paths.Bin())
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	tr := transport.NewWstunnel(transport.WstunnelOptions{
 		Binary: wstPath, Role: transport.RoleClient,

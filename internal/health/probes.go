@@ -47,7 +47,26 @@ func ResolveVia(ctx context.Context, server netip.Addr, name string, timeout tim
 			return d.DialContext(ctx, network, netip.AddrPortFrom(server, 53).String())
 		},
 	}
-	return r.LookupHost(ctx, name)
+	// The lookup can ignore its context on Windows (a UDP read that never
+	// times out), which once froze connecting and disconnecting. Return on
+	// time regardless; a stuck lookup is abandoned.
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	type result struct {
+		addrs []string
+		err   error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		a, err := r.LookupHost(ctx, name)
+		ch <- result{a, err}
+	}()
+	select {
+	case res := <-ch:
+		return res.addrs, res.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("lookup %s via %s: %w", name, server, ctx.Err())
+	}
 }
 
 // DNSLeak compares what a "whoami" name (which answers with the IP of the
