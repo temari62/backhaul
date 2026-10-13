@@ -4,31 +4,48 @@ on: [push, pull_request]
 jobs:
   unit:
     strategy:
+      fail-fast: false # one OS failing shouldn't cancel the others
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod }
+      # The desktop app embeds wstunnel/Xray/Wintun/VC++ runtime from
+      # cmd/backhaul-app/bundle, which isn't committed (release builds create
+      # it with cmd/backhaul-app/gen). Empty stand-ins are enough to compile.
+      - name: placeholder app bundle
+        shell: bash
+        run: |
+          mkdir -p cmd/backhaul-app/bundle
+          for f in wintun.dll wstunnel.exe xray.exe vcruntime140.dll; do
+            [ -f cmd/backhaul-app/bundle/$f ] || : > cmd/backhaul-app/bundle/$f
+          done
       - run: go vet ./...
       - run: go test ./...
       - name: build tray (macOS uses cgo here)
         run: go build ./cmd/backhaul-tray
 
   cross:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod }
+      - name: placeholder app bundle
+        run: |
+          mkdir -p cmd/backhaul-app/bundle
+          for f in wintun.dll wstunnel.exe xray.exe vcruntime140.dll; do
+            [ -f cmd/backhaul-app/bundle/$f ] || : > cmd/backhaul-app/bundle/$f
+          done
       - run: make vet cross
 
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod }
       - run: sudo apt-get update && sudo apt-get install -y nftables dnsmasq-base curl
       - name: fetch pinned wstunnel
@@ -36,6 +53,7 @@ jobs:
           curl -fsSL -o /tmp/wst.tgz https://github.com/erebe/wstunnel/releases/download/v10.7.1/wstunnel_10.7.1_linux_amd64.tar.gz
           echo "fa842ed53fbb14b1c69cd98829f9895d7f8a6b0d562c57c1175851a52cea9ea2  /tmp/wst.tgz" | sha256sum -c
           tar -xzf /tmp/wst.tgz -C /tmp wstunnel
+          chmod +x /tmp/wstunnel # the archive doesn't keep the executable bit
       - name: fetch pinned xray (REALITY transport)
         run: |
           curl -fsSL -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip

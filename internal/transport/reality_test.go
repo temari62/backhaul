@@ -122,7 +122,7 @@ func TestRealityEndToEndUDP(t *testing.T) {
 
 	srv, cli := realityPair(t, port, echo.LocalAddr().String(), local)
 	srv.Binary, cli.Binary = bin, bin
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	s, err := NewReality(srv)
 	if err != nil {
@@ -143,13 +143,21 @@ func TestRealityEndToEndUDP(t *testing.T) {
 
 	conn, _ := net.Dial("udp", local)
 	defer conn.Close()
+	// Wait by the clock, not by attempts: a send that bounces (nothing
+	// listening yet) fails the read at once, and the first REALITY handshake
+	// also has the server fetch the real site's certificate, which can take
+	// a while on a CI runner.
 	buf := make([]byte, 64)
-	for i := 0; i < 30; i++ {
+	for i, deadline := 0, time.Now().Add(45*time.Second); time.Now().Before(deadline); i++ {
 		msg := "wg-" + strconv.Itoa(i)
 		conn.Write([]byte(msg))
 		conn.SetReadDeadline(time.Now().Add(time.Second))
-		if n, err := conn.Read(buf); err == nil && string(buf[:n]) == msg {
+		n, err := conn.Read(buf)
+		if err == nil && string(buf[:n]) == msg {
 			return
+		}
+		if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+			time.Sleep(500 * time.Millisecond) // immediate failure: don't spin
 		}
 	}
 	t.Fatalf("no echo through VLESS+REALITY (server: %+v, client: %+v)", s.Status(), c.Status())
