@@ -205,3 +205,77 @@ func EnsureXray(ctx context.Context, cfg *config.Config, binDir string) (string,
 	slog.Info("installed xray", "path", dst)
 	return dst, nil
 }
+
+// cloudflared (Cloudflare Tunnel exit node). Checksums verified against the
+// downloads and GitHub's recorded digests; the Windows build is signed by
+// Cloudflare, Inc.
+var cloudflaredAssets = map[string]string{
+	"windows_amd64": "cloudflared-windows-amd64.exe",
+	"linux_amd64":   "cloudflared-linux-amd64",
+	"linux_arm64":   "cloudflared-linux-arm64",
+}
+
+var cloudflaredSHA256 = map[string]map[string]string{
+	"2026.9.3": {
+		"windows_amd64": "f096265ec2fcbe9bb6e2d64268db167ced3fcbb83d894bdb9e2fcdb26f2ea7e2",
+		"linux_amd64":   "77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2",
+		"linux_arm64":   "aaeb2d7d0da3614634c7e03ab13487a1522c2e79165ed2929cfe23d5e95b326d",
+	},
+}
+
+// CloudflaredRelease returns the download URL and pinned SHA-256 for platform.
+func CloudflaredRelease(version, platform string) (url, sha string, err error) {
+	asset, ok := cloudflaredAssets[platform]
+	if !ok {
+		return "", "", fmt.Errorf("Cloudflare Tunnel mode isn't available on %s yet (Windows and Linux are)", platform)
+	}
+	if sha = cloudflaredSHA256[version][platform]; sha == "" {
+		return "", "", fmt.Errorf("no pinned checksum for cloudflared %s %s", version, platform)
+	}
+	return fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/download/%s/%s", version, asset), sha, nil
+}
+
+func cloudflaredExe() string {
+	if runtime.GOOS == "windows" {
+		return "cloudflared.exe"
+	}
+	return "cloudflared"
+}
+
+// EnsureCloudflared returns a usable cloudflared: the configured path, or
+// <config>/bin/cloudflared-<version>/, downloading the pinned release
+// (checksum-verified) the first time.
+func EnsureCloudflared(ctx context.Context, cfg *config.Config, binDir string) (string, error) {
+	if p := cfg.Reachability.CFTunnel.CloudflaredPath; p != "" {
+		if _, err := os.Stat(p); err != nil {
+			return "", fmt.Errorf("reachability.cloudflare_tunnel.cloudflared_path %q does not exist", p)
+		}
+		return p, nil
+	}
+	v := config.DefaultCloudflaredVersion
+	dir := filepath.Join(binDir, "cloudflared-"+v)
+	dst := filepath.Join(dir, cloudflaredExe())
+	if _, err := os.Stat(dst); err == nil {
+		return dst, nil
+	}
+	url, sha, err := CloudflaredRelease(v, runtime.GOOS+"_"+runtime.GOARCH)
+	if err != nil {
+		return "", err
+	}
+	slog.Info("downloading cloudflared (Cloudflare Tunnel)", "version", v)
+	bin, err := fetch.Verified(ctx, url, sha)
+	if err != nil {
+		return "", fmt.Errorf("download cloudflared: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(dst+".tmp", bin, 0o755); err != nil {
+		return "", err
+	}
+	if err := os.Rename(dst+".tmp", dst); err != nil {
+		return "", err
+	}
+	slog.Info("installed cloudflared", "path", dst)
+	return dst, nil
+}

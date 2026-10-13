@@ -33,7 +33,10 @@ const (
 const (
 	ReachPortForward = "port-forward"
 	ReachRelay       = "relay"
-	ReachRendezvous  = "rendezvous" // mode C: stub only in v1
+	// ReachCFTunnel (cloudflare transport, exit node): an outgoing Cloudflare
+	// Tunnel (cloudflared) carries the traffic in — no router port forward.
+	ReachCFTunnel   = "cloudflare-tunnel"
+	ReachRendezvous = "rendezvous" // mode C: stub only in v1
 )
 
 // Duration is a time.Duration that (un)marshals as a Go duration string ("10s").
@@ -151,7 +154,22 @@ type Reachability struct {
 	// UPnP asks the home router to forward the port automatically
 	// (port-forward mode, exit node). Harmless when the router lacks UPnP.
 	UPnP bool `toml:"upnp"`
+	// CFTunnel is the Cloudflare Tunnel (cloudflare-tunnel mode, exit node).
+	CFTunnel CFTunnel `toml:"cloudflare_tunnel"`
 }
+
+// CFTunnel describes the exit node's Cloudflare Tunnel.
+type CFTunnel struct {
+	TunnelID string `toml:"tunnel_id,omitempty"`
+	// LocalPort is where wstunnel listens, on 127.0.0.1 only; cloudflared
+	// forwards the tunnel to it.
+	LocalPort int `toml:"local_port,omitempty"`
+	// CloudflaredPath overrides the cloudflared binary (else downloaded).
+	CloudflaredPath string `toml:"cloudflared_path,omitempty"`
+}
+
+// DefaultCFTunnelLocalPort is the local wstunnel port in tunnel mode.
+const DefaultCFTunnelLocalPort = 47443
 
 // Relay is mode B: a VPS running `wstunnel server` that both laptops dial.
 type Relay struct {
@@ -295,6 +313,9 @@ const DefaultWstunnelVersion = "10.7.1"
 // DefaultXrayVersion is the Xray release used for the REALITY transport.
 const DefaultXrayVersion = "26.3.27"
 
+// DefaultCloudflaredVersion is the cloudflared release for Cloudflare Tunnel.
+const DefaultCloudflaredVersion = "2026.9.3"
+
 // Secrets live in secrets.toml with 0600 perms. Never log them.
 type Secrets struct {
 	PrivateKey   string `toml:"private_key"`
@@ -303,6 +324,8 @@ type Secrets struct {
 	// REALITY transport secrets.
 	RealityPrivateKey string `toml:"reality_private_key,omitempty"` // exit node only
 	RealityUUID       string `toml:"reality_uuid,omitempty"`        // both sides (VLESS user id)
+	// CFTunnelToken runs the Cloudflare Tunnel (exit node only).
+	CFTunnelToken string `toml:"cloudflare_tunnel_token,omitempty"`
 }
 
 // LogValue redacts secrets if a Secrets value ever reaches slog.

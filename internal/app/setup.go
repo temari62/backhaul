@@ -29,6 +29,9 @@ type ExitNodeOptions struct {
 	// Cloudflare transport: the zone holding Endpoint (a hostname) and the
 	// API token used to keep its proxied DNS record pointed at this PC.
 	CloudflareZoneID, CloudflareToken string
+	// Cloudflare Tunnel (no router port forward): set by
+	// PrepareCloudflareTunnel. Empty = the router-based Cloudflare mode.
+	CloudflareTunnelID, CloudflareTunnelToken string
 }
 
 // SetupResult is what the exit-node setup produced.
@@ -208,6 +211,17 @@ func setupReality(c *config.Config, sec *config.Secrets, b *pairing.Blob, o Exit
 func setupCloudflare(c *config.Config, sec *config.Secrets, b *pairing.Blob, o ExitNodeOptions) {
 	c.Transport.Kind = config.TransportCloudflare
 	b.TransportKind = config.TransportCloudflare
+	if o.CloudflareTunnelID != "" {
+		// The exit node sits behind an outgoing tunnel; the client sees an
+		// ordinary Cloudflare exit node on port 443.
+		c.Reachability.Mode = config.ReachCFTunnel
+		c.Reachability.CFTunnel = config.CFTunnel{TunnelID: o.CloudflareTunnelID, LocalPort: config.DefaultCFTunnelLocalPort}
+		c.Reachability.UPnP = false
+		c.DDNS = config.DDNS{} // the tunnel's CNAME must not be replaced by an A record
+		sec.CFTunnelToken = o.CloudflareTunnelToken
+		b.ReachMode = config.ReachPortForward
+		return
+	}
 	if o.CloudflareToken != "" {
 		c.DDNS = config.DDNS{Provider: "cloudflare", Domain: o.Endpoint, ZoneID: o.CloudflareZoneID,
 			Proxied: true, Interval: config.Default().DDNS.Interval}

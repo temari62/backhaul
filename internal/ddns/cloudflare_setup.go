@@ -16,26 +16,37 @@ var CloudflareAPI = "https://api.cloudflare.com/client/v4"
 // CloudflareZone finds the zone that contains hostname (e.g. "example.com"
 // for "vpn.example.com") using a scoped API token.
 func CloudflareZone(ctx context.Context, client *http.Client, token, hostname string) (id, name string, err error) {
+	id, name, _, err = CloudflareZoneAccount(ctx, client, token, hostname)
+	return id, name, err
+}
+
+// CloudflareZoneAccount is CloudflareZone plus the ID of the account that
+// owns the zone (Cloudflare Tunnel lives at account level).
+func CloudflareZoneAccount(ctx context.Context, client *http.Client, token, hostname string) (id, name, accountID string, err error) {
 	c := &Cloudflare{o: Options{Token: token, Client: orDefault(client)}, BaseURL: CloudflareAPI}
 	labels := strings.Split(strings.TrimSuffix(strings.ToLower(hostname), "."), ".")
 	for i := 0; i+2 <= len(labels); i++ { // longest candidate first: a.b.example.com, b.example.com, example.com
 		candidate := strings.Join(labels[i:], ".")
 		var zones []struct {
-			ID     string `json:"id"`
-			Name   string `json:"name"`
-			Status string `json:"status"`
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			Status  string `json:"status"`
+			Account struct {
+				ID string `json:"id"`
+			} `json:"account"`
 		}
 		if err := c.call(ctx, http.MethodGet, "/zones?name="+url.QueryEscape(candidate), nil, &zones); err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		if len(zones) > 0 {
-			if zones[0].Status != "" && zones[0].Status != "active" {
-				return zones[0].ID, zones[0].Name, fmt.Errorf("the Cloudflare zone %s is %q, not active yet — finish moving the domain's nameservers to Cloudflare (at your registrar), then try again", zones[0].Name, zones[0].Status)
+			z := zones[0]
+			if z.Status != "" && z.Status != "active" {
+				return z.ID, z.Name, z.Account.ID, fmt.Errorf("the Cloudflare zone %s is %q, not active yet — finish moving the domain's nameservers to Cloudflare (at your registrar), then try again", z.Name, z.Status)
 			}
-			return zones[0].ID, zones[0].Name, nil
+			return z.ID, z.Name, z.Account.ID, nil
 		}
 	}
-	return "", "", fmt.Errorf("no Cloudflare zone found for %s — add the domain to your Cloudflare account, and make sure the API token can read it", hostname)
+	return "", "", "", fmt.Errorf("no Cloudflare zone found for %s — add the domain to your Cloudflare account, and make sure the API token can read it", hostname)
 }
 
 // CloudflareEnsureSSL makes sure Cloudflare will talk HTTPS to the exit node

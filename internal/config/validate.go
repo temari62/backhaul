@@ -130,6 +130,9 @@ func Validate(c *Config, s *Secrets) error {
 		if c.Reachability.Mode == ReachRelay {
 			add("transport.kind %q does not use relay mode", TransportCloudflare)
 		}
+		if c.Mode == ModeServe && c.Reachability.Mode == ReachCFTunnel && c.Reachability.CFTunnel.TunnelID == "" {
+			add("reachability.cloudflare_tunnel.tunnel_id is missing (set the exit node up again)")
+		}
 	default:
 		add("transport.kind must be %q, %q or %q", TransportWstunnel, TransportReality, TransportCloudflare)
 	}
@@ -148,10 +151,20 @@ func Validate(c *Config, s *Secrets) error {
 		if c.Reachability.Relay.TLSSHA256 != "" && !ValidFingerprint(c.Reachability.Relay.TLSSHA256) {
 			add("reachability.relay.tls_sha256 must look like AB:CD:...(32 bytes)")
 		}
+	case ReachCFTunnel:
+		if c.Transport.Kind != TransportCloudflare {
+			add("reachability.mode %q needs transport.kind %q", ReachCFTunnel, TransportCloudflare)
+		}
+		if p := c.Reachability.CFTunnel.LocalPort; p != 0 {
+			checkPort("reachability.cloudflare_tunnel.local_port", p)
+		}
+		if c.DDNS.Provider != "" {
+			add("ddns must be off with a Cloudflare Tunnel (it would replace the tunnel's DNS record)")
+		}
 	case ReachRendezvous:
 		add("reachability.mode %q is not implemented in v1", ReachRendezvous)
 	default:
-		add("reachability.mode must be %q or %q", ReachPortForward, ReachRelay)
+		add("reachability.mode must be %q, %q or %q", ReachPortForward, ReachRelay, ReachCFTunnel)
 	}
 
 	switch c.DDNS.Provider {

@@ -148,6 +148,34 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	}
 	cl.push("stop transport", func(context.Context) { tr.Stop() })
 
+	// 4b. Cloudflare Tunnel: an outgoing connection to Cloudflare carries
+	//     the clients' traffic in, so there is no router step.
+	if c.Reachability.Mode == config.ReachCFTunnel {
+		cfd, err := transport.EnsureCloudflared(ctx, c, e.Paths.Bin())
+		if err != nil {
+			return err
+		}
+		tun := transport.NewCloudflared(transport.CloudflaredOptions{Binary: cfd, Token: e.Sec.CFTunnelToken,
+			ReadyTimeout: 30 * time.Second, BackoffMin: c.Transport.BackoffMin.Duration, BackoffMax: c.Transport.BackoffMax.Duration})
+		if err := tun.Start(ctx); err != nil {
+			slog.Warn("Cloudflare Tunnel not connected yet (it keeps retrying)", "err", err)
+		}
+		cl.push("stop Cloudflare Tunnel", func(context.Context) { tun.Stop() })
+		rt.Router = cfTunnelStatus(tun.Status(), tun.Problem())
+		go func() { // keep the Share tab's note truthful
+			t := time.NewTicker(3 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					rt.Router = cfTunnelStatus(tun.Status(), tun.Problem())
+				}
+			}
+		}()
+	}
+
 	// 5. Router: forward the port automatically (UPnP) and detect CGNAT.
 	if c.Reachability.Mode == config.ReachPortForward {
 		rt.LANIP = osutil.LANIP()
@@ -361,6 +389,10 @@ func (e *Env) serveTransport(ctx context.Context, cl *cleanup) (transport.Transp
 	} else {
 		opts.Role = transport.RoleServer
 		opts.ListenAddr, opts.Port = c.Transport.ListenAddr, c.Transport.Port
+		if c.Reachability.Mode == config.ReachCFTunnel {
+			// Only cloudflared (on this machine) talks to it: no public port.
+			opts.ListenAddr, opts.Port = "127.0.0.1", cfTunnelLocalPort(c)
+		}
 		opts.CertFile, opts.KeyFile = c.Transport.CertFile, c.Transport.KeyFile
 		opts.RestrictTo = wgLocal
 	}
@@ -372,4 +404,27 @@ func holderOr(ce *upnp.ConflictError) string {
 		return "address unknown"
 	}
 	return ce.Holder
+}
+
+// cfTunnelLocalPort is the local wstunnel port in Cloudflare Tunnel mode.
+func cfTunnelLocalPort(c *config.Config) int {
+	if p := c.Reachability.CFTunnel.LocalPort; p != 0 {
+		return p
+	}
+	return config.DefaultCFTunnelLocalPort
+}
+
+// cfTunnelStatus is the Share tab's note in Cloudflare Tunnel mode.
+func cfTunnelStatus(st transport.Status, problem string) string {
+	if st.State == transport.StateReady {
+		return "Connected to Cloudflare through an outgoing tunnel: no router setup needed."
+	}
+	msg := "Not connected to Cloudflare yet (Backhaul keeps trying)"
+	if problem == "" {
+		problem = st.LastError
+	}
+	if problem != "" {
+		msg += ": " + problem
+	}
+	return msg + ". If it says the token is not valid, set the exit node up again."
 }

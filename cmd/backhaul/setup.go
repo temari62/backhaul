@@ -78,7 +78,7 @@ On the client (Laptop 1):      backhaul setup --import <blob>   (or --import @pa
 	fl.BoolVarP(&f.yes, "yes", "y", false, "non-interactive: accept defaults, never prompt")
 	fl.BoolVar(&f.force, "force", false, "overwrite an existing config")
 	fl.BoolVar(&f.qr, "qr", false, "exit node: also print the pairing blob as a terminal QR code")
-	fl.StringVar(&f.transport, "transport", config.TransportWstunnel, `exit node: "wstunnel", "reality" (VLESS+REALITY: impersonates www.amazon.com) or "cloudflare" (through your domain on Cloudflare; most robust in China)`)
+	fl.StringVar(&f.transport, "transport", config.TransportWstunnel, `exit node: "wstunnel", "reality" (VLESS+REALITY: impersonates www.amazon.com), "cloudflare" (through your domain on Cloudflare; most robust in China) or "cloudflare-tunnel" (the same without a router port forward)`)
 	fl.StringVar(&f.cfToken, "cloudflare-token", "", "cloudflare transport: API token (Zone Read, DNS Edit, Zone Settings Edit); stored in secrets.toml")
 	return c
 }
@@ -244,7 +244,24 @@ func runSetup(ctx context.Context, g *globals, f *setupFlags, subnet6Set bool) e
 		Endpoint: endpoint, Port: port, Subnet: subnet, Subnet6: subnet6,
 		ReachMode: reach, Relay: relay, DDNS: dd, DDNSToken: token, Transport: f.transport,
 	}
-	if f.transport == config.TransportCloudflare {
+	if f.transport == transportCFTunnel {
+		// Cloudflare Tunnel: the Cloudflare disguise without a router port
+		// forward (an outgoing connection to Cloudflare carries the traffic).
+		cfToken := f.cfToken
+		if cfToken == "" {
+			cfToken = pr.ask("Cloudflare API token (Zone Read, DNS Edit, Zone Settings Edit, Account Cloudflare Tunnel Edit)", "")
+		}
+		if cfToken == "" {
+			return errors.New("--cloudflare-token is required for Cloudflare Tunnel")
+		}
+		tr, err := app.PrepareCloudflareTunnel(ctx, cfToken, endpoint, config.DefaultCFTunnelLocalPort)
+		if err != nil {
+			return fmt.Errorf("Cloudflare Tunnel: %w", err)
+		}
+		fmt.Printf("Cloudflare Tunnel %s → this machine (127.0.0.1:%d), zone %s\n", endpoint, config.DefaultCFTunnelLocalPort, tr.ZoneName)
+		opts.Transport, opts.Port = config.TransportCloudflare, 443
+		opts.CloudflareZoneID, opts.CloudflareTunnelID, opts.CloudflareTunnelToken = tr.ZoneID, tr.TunnelID, tr.TunnelToken
+	} else if f.transport == config.TransportCloudflare {
 		cfToken := f.cfToken
 		if cfToken == "" {
 			cfToken = pr.ask("Cloudflare API token (Zone Read, DNS Edit, Zone Settings Edit)", "")
@@ -329,6 +346,12 @@ The blob contains the client's private key. Move it over a trusted channel
 
 Next steps on this machine:
 `, p.Config(), res.Fingerprint, p.Pairing(), res.Blob)
+	if res.Config.Reachability.Mode == config.ReachCFTunnel {
+		fmt.Printf(`  1. Start the exit node:   %s   (it downloads cloudflared the first time)
+  2. No router or firewall setup is needed: the tunnel is an outgoing connection.
+`, elevated("backhaul serve"))
+		return
+	}
 	if reach == config.ReachRelay {
 		fmt.Printf(`  1. On the relay VPS run wstunnel server, e.g.:
        wstunnel server --restrict-http-upgrade-path-prefix %s wss://0.0.0.0:%d
@@ -377,3 +400,6 @@ func lanIP() string {
 	defer c.Close()
 	return c.LocalAddr().(*net.UDPAddr).IP.String()
 }
+
+// transportCFTunnel is the --transport value for Cloudflare Tunnel mode.
+const transportCFTunnel = "cloudflare-tunnel"

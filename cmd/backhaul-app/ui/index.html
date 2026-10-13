@@ -263,7 +263,8 @@ dialog.help { max-width: 540px; }
       <div class="sec">Set up this PC as an exit node</div>
       <label class="field">Disguise
         <select id="srvTransport" onchange="updateSetupForm()">
-          <option value="cloudflare">Cloudflare — your own domain (best in China)</option>
+          <option value="cftunnel">Cloudflare Tunnel — your own domain, no router setup</option>
+          <option value="cloudflare">Cloudflare — your own domain, router port forward</option>
           <option value="reality" selected>REALITY — looks like www.amazon.com</option>
           <option value="wstunnel">WebSocket over TLS (outside China)</option>
         </select>
@@ -277,9 +278,9 @@ dialog.help { max-width: 540px; }
       <label class="field" id="cfTokenBox" hidden>Cloudflare API token
         <input id="cfToken" type="password" placeholder="Paste the token" spellcheck="false" autocomplete="off">
         <span class="note">Cloudflare → My Profile → API Tokens → Create Token → Custom: <b>Zone·Zone·Read</b>, <b>Zone·DNS·Edit</b>,
-          <b>Zone·Zone Settings·Edit</b> for your domain.</span>
+          <b>Zone·Zone Settings·Edit</b> for your domain<span id="cfTunnelPerm">, plus <b>Account·Cloudflare Tunnel·Edit</b></span>.</span>
       </label>
-      <details class="more">
+      <details class="more" id="srvAdvanced">
         <summary>Advanced</summary>
         <label class="field">Port (your router forwards this TCP port to this PC)
           <input id="srvPort" type="number" min="1" max="65535" value="443">
@@ -365,10 +366,15 @@ systemctl daemon-reload &amp;&amp; systemctl enable --now backhaul</pre><button 
         <summary>Cloudflare: use your own domain</summary>
         <ol>
           <li>Add your domain at <b>dash.cloudflare.com</b> (Free plan); at your registrar, set the two Cloudflare nameservers it shows.</li>
-          <li>Cloudflare → My Profile → API Tokens → Create Token → Custom: <b>Zone·Zone·Read</b>, <b>Zone·DNS·Edit</b>, <b>Zone·Zone Settings·Edit</b> for your domain.</li>
-          <li>On the exit node: <b>Share</b> → Disguise <b>Cloudflare</b> → a hostname such as <code>cdn.yourdomain.com</code> → paste the token → <b>Set up</b>.</li>
+          <li>Cloudflare → My Profile → API Tokens → Create Token → Custom: <b>Zone·Zone·Read</b>, <b>Zone·DNS·Edit</b>, <b>Zone·Zone Settings·Edit</b>
+            for your domain — and for Cloudflare Tunnel also <b>Account·Cloudflare Tunnel·Edit</b>.</li>
+          <li>On the exit node: <b>Share</b> → choose a Disguise (below) → a hostname such as <code>cdn.yourdomain.com</code> → paste the token → <b>Set up</b>.</li>
         </ol>
-        <p>Two exit nodes at the same home share one internet address, so the second needs another port: under <b>Advanced</b>, use 2053, 2083, 2087, 2096 or 8443.</p>
+        <p><b>Cloudflare Tunnel</b> (recommended): the exit node connects <i>out</i> to Cloudflare, so the router needs no setup at all —
+          no port forwarding, no UPnP, and any number of exit nodes can share one home internet connection.</p>
+        <p><b>Cloudflare</b> (router port forward): Cloudflare connects <i>in</i> to your exit node, so the router must forward the port
+          (Backhaul asks it via UPnP). Two such exit nodes at the same home need different ports: under <b>Advanced</b>, use 2053, 2083, 2087, 2096 or 8443.</p>
+        <p>Switching an existing exit node to Cloudflare Tunnel: Share → Reset…, set it up with the same hostname, and add the new pairing code on your other PCs.</p>
       </details>
       <details>
         <summary>Can't connect?</summary>
@@ -478,7 +484,7 @@ function setBusy(btn, on, label) {
   if (on) { b._label = b._label || b.textContent; b.innerHTML = '<span class="spin"></span>' + (label || b._label); b.disabled = true; busy[btn] = true; }
   else { if (b._label) b.textContent = b._label; b._label = null; b.disabled = false; delete busy[btn]; }
 }
-const trName = (t) => ({ reality: 'REALITY', cloudflare: 'Cloudflare' })[t] || 'WebSocket/TLS';
+const trName = (t) => ({ reality: 'REALITY', cloudflare: 'Cloudflare', cftunnel: 'Cloudflare Tunnel' })[t] || 'WebSocket/TLS';
 
 function render(s) {
   S = s;
@@ -649,7 +655,9 @@ async function refresh() {
 }
 
 function updateSetupForm() {
-  const cf = $('srvTransport').value === 'cloudflare';
+  const kind = $('srvTransport').value, tunnel = kind === 'cftunnel', cf = tunnel || kind === 'cloudflare';
+  $('cfTunnelPerm').hidden = !tunnel;
+  $('srvAdvanced').hidden = tunnel; // no public port: nothing to forward
   $('srvHostLabel').textContent = cf ? 'Hostname on Cloudflare' : 'Public address (IP or DDNS name)';
   $('srvHost').placeholder = cf ? 'e.g. cdn.yourdomain.com' : 'e.g. myhome.duckdns.org';
   $('detectBtn').hidden = cf;

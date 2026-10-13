@@ -34,6 +34,10 @@ const (
 	RoleConnect = config.ModeConnect
 )
 
+// TransportCFTunnel is the setup choice "Cloudflare Tunnel": the Cloudflare
+// disguise with an outgoing tunnel instead of a router port forward.
+const TransportCFTunnel = "cftunnel"
+
 // Backend is safe for concurrent use.
 type Backend struct {
 	Base    string                     // ~/.config/backhaul
@@ -126,6 +130,9 @@ func (b *Backend) roleView(role string) RoleView {
 	}
 	v.Configured = true
 	v.Transport = cfg.Transport.Kind
+	if cfg.Reachability.Mode == config.ReachCFTunnel {
+		v.Transport = TransportCFTunnel
+	}
 	host, port, _ := cfg.RemoteHost()
 	v.Endpoint, v.Port, v.KillSwitch = host, port, cfg.Client.KillSwitch
 	v.PairingID = pairingID(cfg)
@@ -226,9 +233,29 @@ func (b *Backend) SetupServe(endpoint string, port int, transportKind, cloudflar
 	if err := b.notRunning(RoleServe); err != nil {
 		return Pairing{}, err
 	}
+	tunnel := transportKind == TransportCFTunnel
+	if tunnel {
+		transportKind, port = config.TransportCloudflare, 443 // the client dials Cloudflare on 443
+	}
 	opts := app.ExitNodeOptions{Endpoint: endpoint, Port: port,
 		Subnet: "10.9.0.0/24", Subnet6: "fd09:b4c0::/64", ReachMode: config.ReachPortForward, Transport: transportKind}
-	if transportKind == config.TransportCloudflare {
+	if tunnel {
+		if _, err := netip.ParseAddr(endpoint); err == nil || !strings.Contains(endpoint, ".") {
+			return Pairing{}, errors.New("enter the hostname you want on Cloudflare, e.g. home.yourdomain.com")
+		}
+		token := strings.TrimSpace(cloudflareToken)
+		if token == "" {
+			return Pairing{}, errors.New("paste your Cloudflare API token (see the steps in the help)")
+		}
+		if err := b.notRunning(RoleServe); err != nil {
+			return Pairing{}, err
+		}
+		tr, err := app.PrepareCloudflareTunnel(context.Background(), token, endpoint, config.DefaultCFTunnelLocalPort)
+		if err != nil {
+			return Pairing{}, fmt.Errorf("Cloudflare Tunnel: %w", err)
+		}
+		opts.CloudflareZoneID, opts.CloudflareTunnelID, opts.CloudflareTunnelToken = tr.ZoneID, tr.TunnelID, tr.TunnelToken
+	} else if transportKind == config.TransportCloudflare {
 		if _, err := netip.ParseAddr(endpoint); err == nil || !strings.Contains(endpoint, ".") {
 			return Pairing{}, errors.New("enter the hostname you want on Cloudflare, e.g. vpn.yourdomain.com")
 		}

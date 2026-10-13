@@ -59,8 +59,14 @@ jobs:
           curl -fsSL -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip
           echo "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae  /tmp/xray.zip" | sha256sum -c
           unzip -o -q /tmp/xray.zip xray -d /tmp && chmod +x /tmp/xray
-      - name: unprivileged end-to-end (userspace exit node; wstunnel and REALITY)
+      - name: fetch pinned cloudflared (Cloudflare Tunnel exit node)
         run: |
-          BACKHAUL_E2E=1 BACKHAUL_TEST_WSTUNNEL=/tmp/wstunnel BACKHAUL_TEST_XRAY=/tmp/xray BACKHAUL_TEST_REALITY_E2E=1 \
-            go test ./internal/app ./internal/transport ./internal/doctor ./internal/keys -run 'E2E|EndToEnd|Reality|Camouflage' -v
+          curl -fsSL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/download/2026.9.3/cloudflared-linux-amd64
+          echo "77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2  /tmp/cloudflared" | sha256sum -c
+          chmod +x /tmp/cloudflared
+      - name: unprivileged end-to-end (userspace exit node; wstunnel, REALITY, Cloudflare Tunnel)
+        run: |
+          BACKHAUL_E2E=1 BACKHAUL_TEST_WSTUNNEL=/tmp/wstunnel BACKHAUL_TEST_XRAY=/tmp/xray \
+          BACKHAUL_TEST_CLOUDFLARED=/tmp/cloudflared BACKHAUL_TEST_REALITY_E2E=1 \
+            go test ./internal/app ./internal/transport ./internal/doctor ./internal/keys -run 'E2E|EndToEnd|Reality|Camouflage|Cloudflared' -v
       - run: sudo -E env "PATH=$PATH" WSTUNNEL=/tmp/wstunnel bash test/integration/netns.sh

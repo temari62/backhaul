@@ -406,6 +406,32 @@ one such as `cdn.` or `static.` rather than `vpn.`.
 
 Cloudflare's free plan is fine for personal use. Speed from China varies by time of day.
 
+### Cloudflare Tunnel (no router setup)
+
+This is the Cloudflare disguise without a port forward. The exit node runs Cloudflare's
+`cloudflared`, which keeps an **outgoing** connection to Cloudflare, and Cloudflare sends the
+clients' traffic down it.
+
+**What's different from plain Cloudflare mode:**
+- **Router:** no port forwarding and no UPnP. A router reboot or a change of home IP doesn't matter.
+- **Several exit nodes:** any number can share one home connection.
+- **Client:** sees an ordinary Cloudflare exit node on port 443; nothing changes on its side.
+
+**Setting it up:**
+- **API token:** needs one more permission, **Account · Cloudflare Tunnel · Edit**.
+- **In the app:** choose **Disguise: Cloudflare Tunnel**.
+- **From the command line:**
+  `backhaul setup --role serve --transport cloudflare-tunnel --endpoint home.yourdomain.com --cloudflare-token …`
+
+**What setup does:**
+- creates (or reuses) the tunnel `backhaul-<hostname>`;
+- routes the hostname to wstunnel on `127.0.0.1:47443`, which isn't reachable from the network;
+- points the hostname's DNS at the tunnel (a proxied CNAME, replacing an earlier A record);
+- stores the tunnel's token.
+
+`serve` downloads the pinned cloudflared (Windows and Linux) the first time and supervises it. The
+Share tab and `backhaul status` show whether it's connected and, if not, cloudflared's reason.
+
 ### REALITY and wstunnel
 
 | Disguise | What a censor sees | Use when |
