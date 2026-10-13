@@ -20,8 +20,10 @@ import (
 const (
 	// Lease is renewed well before it expires, so a crashed backhaul leaves
 	// the router mapping behind for at most this long.
-	Lease         = 60 * time.Minute
-	renewInterval = 20 * time.Minute
+	Lease = 60 * time.Minute
+	// renewInterval also bounds how long a router reboot (which forgets all
+	// forwards) leaves the exit node unreachable.
+	renewInterval = 5 * time.Minute
 	description   = "Backhaul exit node"
 )
 
@@ -154,24 +156,28 @@ func (m *Mapping) add(ctx context.Context) error {
 
 // KeepAlive renews the lease until ctx is done, then removes the mapping.
 func (m *Mapping) KeepAlive(ctx context.Context) {
-	if m.lease != 0 {
-		t := time.NewTicker(renewInterval)
-		defer t.Stop()
-	loop:
-		for {
-			select {
-			case <-ctx.Done():
-				break loop
-			case <-t.C:
-				rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				if err := m.add(rctx); err != nil {
-					slog.Warn("could not renew the router port forward", "err", err)
-				}
-				cancel()
+	// Re-add even permanent mappings: a router reboot forgets them all.
+	t := time.NewTicker(renewInterval)
+	defer t.Stop()
+	failing := false
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			break loop
+		case <-t.C:
+			rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := m.add(rctx)
+			cancel()
+			switch {
+			case err != nil && !failing:
+				slog.Warn("could not renew the router port forward (will keep trying)", "err", err)
+				failing = true
+			case err == nil && failing:
+				slog.Info("router port forward renewed again", "port", m.port)
+				failing = false
 			}
 		}
-	} else {
-		<-ctx.Done()
 	}
 	dctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -434,9 +434,9 @@ function render(s) {
   $('srvAddr').textContent = s.serve.endpoint ? s.serve.endpoint + ':' + s.serve.port : '';
   $('srvTr').textContent = trName(s.serve.transport);
   $('srvPid').textContent = s.serve.pairingId || '–';
-  const lan = s.serve.lanIp ? ' (' + s.serve.lanIp + ')' : '';
+  const lan = s.serve.lanIp ? ' (its address in your home network: ' + s.serve.lanIp + ')' : '';
   $('srvRouter').textContent = (serving && s.router) ? s.router
-    : 'Your router must forward TCP ' + (s.serve.port || 443) + ' to this PC' + lan + '. Backhaul tries to do this automatically (UPnP).';
+    : 'Internet traffic reaches your router first. The router must pass TCP port ' + (s.serve.port || 443) + ' on to this PC' + lan + '. Backhaul asks the router to do this automatically (UPnP).';
   $('srvRouter').className = 'note' + (/carrier-grade|didn.t work|already sends port/.test(s.router || '') && serving ? ' warnbox' : '');
   const sb = $('serveBtn');
   if (!busy.serveBtn) {

@@ -440,6 +440,11 @@ func friendly(err error) string {
 			return "Can't reach the exit node (" + r.Detail + "). Check that: Backhaul on the exit node says \"Sharing\"; your router forwards TCP " +
 				"to the exit node PC; and you're testing from a different network (e.g. a phone hotspot) — many routers can't connect to their own public IP from inside the home network."
 		}
+		if r, ok := pe.Has(doctor.CheckCloudflareOrigin); ok {
+			return "Cloudflare can't reach your exit node (" + r.Detail + "). On the exit node PC, check that it's on and Backhaul shows Sharing, " +
+				"that your home internet works, and that the router still forwards the port. If your home internet address changed while the exit node " +
+				"wasn't sharing, starting sharing updates Cloudflare. Turning on \"Start with Windows\" on the exit node avoids this after restarts."
+		}
 		if r, ok := pe.Has(doctor.CheckEndpointDNS); ok {
 			return "Can't find the exit node's address: " + r.Detail + ". Check the hostname, or your internet connection."
 		}

@@ -369,13 +369,34 @@ func (d *Doctor) cloudflareChecks(ctx context.Context, addr string) []Result {
 		TLSClientConfig: &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12},
 	}
 	defer tr.CloseIdleConnections()
-	client := &http.Client{Transport: tr, Timeout: d.Cfg.Health.ProbeTimeout.Duration}
-	resp, err := client.Get("https://" + host + "/")
+	// Ask on the exit node's own port (Cloudflare forwards edge port N to
+	// origin port N), and wait long enough for Cloudflare's own verdict: it
+	// reports an unreachable exit node (522) only after about 20 seconds.
+	_, port, _ := net.SplitHostPort(addr)
+	url := "https://" + host + "/"
+	if port != "" && port != "443" {
+		url = "https://" + net.JoinHostPort(host, port) + "/"
+	}
+	client := &http.Client{Transport: tr, Timeout: cloudflareOriginWait}
+	resp, err := client.Get(url)
 	if err != nil {
-		return []Result{cert, {Name: CheckCloudflareOrigin, Status: Fail, Detail: err.Error()}}
+		return []Result{cert, {Name: CheckCloudflareOrigin, Status: Fail, Detail: err.Error(),
+			Remedy: "Cloudflare gave no answer in time. Usually that means it cannot reach your exit node: check that the exit node PC is on and Sharing, and that your home internet works"}}
 	}
 	resp.Body.Close()
-	return []Result{cert, cloudflareOriginResult(resp.StatusCode)}
+	r := cloudflareOriginResult(resp.StatusCode)
+	r.Remedy = strings.ReplaceAll(r.Remedy, "TCP 443", "TCP "+orDefault(port, "443"))
+	return []Result{cert, r}
+}
+
+// cloudflareOriginWait is how long to wait for Cloudflare's answer.
+var cloudflareOriginWait = 30 * time.Second
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 // cloudflareOriginResult interprets the status Cloudflare returned.
@@ -383,7 +404,7 @@ func cloudflareOriginResult(code int) Result {
 	r := Result{Name: CheckCloudflareOrigin, Detail: fmt.Sprintf("HTTP %d", code)}
 	switch code {
 	case 521, 522, 523:
-		r.Status, r.Remedy = Fail, "Cloudflare cannot reach your exit node: make sure it is Sharing, and that the router forwards TCP 443 to it"
+		r.Status, r.Remedy = Fail, "Cloudflare cannot reach your exit node: check that the exit node PC is on and Sharing, that your home internet works, and that the router forwards TCP 443 to it"
 	case 524:
 		r.Status, r.Remedy = Fail, "the exit node accepted the connection but did not answer in time"
 	case 525, 526:

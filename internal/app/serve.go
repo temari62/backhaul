@@ -152,7 +152,7 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	if c.Reachability.Mode == config.ReachPortForward {
 		rt.LANIP = osutil.LANIP()
 		var stop func()
-		rt.Router, stop = openRouterPort(ctx, c, rt.LANIP)
+		rt.Router, stop = openRouterPort(ctx, c, rt.LANIP, func(s string) { rt.Router = s })
 		if stop != nil {
 			cl.push("close router port", func(context.Context) { stop() })
 		}
@@ -222,11 +222,15 @@ func serveNeedsPrivileges(c *config.Config, userspace bool) bool {
 // upnpTimeout bounds router discovery + mapping at startup.
 const upnpTimeout = 8 * time.Second
 
+// upnpRetryEvery is how often to ask the router again when it didn't answer.
+const upnpRetryEvery = 2 * time.Minute
+
 // openRouterPort tries to forward the exit node's port on the home router via
 // UPnP and returns a human-readable status (shown by the app and status), plus
 // a stop func that removes the mapping. It never fails serve: without UPnP the
-// user just gets precise manual instructions.
-func openRouterPort(ctx context.Context, c *config.Config, lanIP string) (string, func()) {
+// user just gets precise manual instructions. If the router doesn't answer,
+// it keeps asking in the background; onChange reports a later success.
+func openRouterPort(ctx context.Context, c *config.Config, lanIP string, onChange func(string)) (string, func()) {
 	port := c.Transport.Port
 	manual := fmt.Sprintf("Forward TCP %d on your router to %s (this PC)", port, lanIP)
 	if !c.Reachability.UPnP || lanIP == "" {
@@ -248,8 +252,37 @@ func openRouterPort(ctx context.Context, c *config.Config, lanIP string) (string
 		return msg, nil
 	}
 	if err != nil {
-		slog.Warn("could not open the router port automatically; forward it manually", "port", port, "to", lanIP, "reason", err)
-		return manual + " — automatic setup (UPnP) didn't work: " + err.Error(), nil
+		slog.Warn("could not open the router port automatically; will keep trying (or forward it manually)", "port", port, "to", lanIP, "reason", err)
+		// The router may still be starting up (e.g. after a power cut) or
+		// missed the request: keep asking in the background.
+		rctx, rcancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			t := time.NewTicker(upnpRetryEvery)
+			defer t.Stop()
+			for {
+				select {
+				case <-rctx.Done():
+					return
+				case <-t.C:
+				}
+				dctx, cancel := context.WithTimeout(rctx, upnpTimeout)
+				m, err := upnp.Open(dctx, port, lanIP)
+				cancel()
+				if err != nil {
+					continue
+				}
+				slog.Info("router port opened automatically (UPnP)", "public", fmt.Sprintf("%s:%d", m.ExternalIP, port), "to", fmt.Sprintf("%s:%d", lanIP, port))
+				if onChange != nil {
+					onChange(fmt.Sprintf("Router port %d opened automatically (UPnP) → %s", port, lanIP))
+				}
+				m.KeepAlive(rctx)
+				return
+			}
+		}()
+		return manual + " — automatic setup (UPnP) didn't work yet (" + err.Error() + "); Backhaul keeps trying every 2 minutes.",
+			func() { rcancel(); <-done }
 	}
 	kctx, kcancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

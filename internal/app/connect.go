@@ -158,8 +158,9 @@ func Connect(ctx context.Context, e *Env, killSwitch bool) (err error) {
 			Probe: tunnelProbe(c, dns), ProbeFailures: c.Health.ProbeFailures,
 			OnDown: func(ctx context.Context, st wg.Stats) {
 				if !diagnoseOutage(ctx, pool.Addr(), port, st, tr) && killSwitch && runtime.GOOS == "windows" {
-					killSwitch = !killSwitchCausesOutage(ctx, plan, pool, port)
-					rt.KillSwitch = killSwitch
+					// The kill switch always lets Backhaul itself through, so it can't be
+					// what blocks the exit node; just record the network state.
+					slog.Warn("network state at the outage", "facts", route.NetworkFacts(ctx))
 				}
 			},
 			OnUp: func(d time.Duration) {
@@ -400,40 +401,6 @@ func killSwitchLetsTunnelThrough(ctx context.Context, ownProbe func(context.Cont
 	slog.Error("the kill switch blocks other programs from using the tunnel on this PC; turning it off for this session so you stay connected — please report this",
 		"err", err)
 	_ = route.DisableKillSwitch(ctx)
-	return false
-}
-
-// killSwitchCausesOutage runs when the exit node (or every Cloudflare
-// address) stops answering with the kill switch on. On one user's PC that
-// happened about a minute after *any* kill switch went on — Windows Firewall
-// rules or WFP filters — and stopped when it was removed. So: record what
-// Windows thinks of the networks, lift the kill switch, and try again. If
-// the exit node answers now, the kill switch was (indirectly) the cause and
-// stays off for this session; otherwise it goes back on.
-func killSwitchCausesOutage(ctx context.Context, plan route.Plan, pool *edgePool, port int) bool {
-	slog.Warn("network state at the outage", "facts", route.NetworkFacts(ctx))
-	if err := route.DisableKillSwitch(ctx); err != nil {
-		return false
-	}
-	for i := 0; i < 3 && ctx.Err() == nil; i++ {
-		if i > 0 {
-			time.Sleep(2 * time.Second)
-		}
-		for _, ep := range []netip.Addr{pool.Addr(), pool.All()[0]} {
-			c, err := net.DialTimeout("tcp", netip.AddrPortFrom(ep, uint16(port)).String(), 4*time.Second)
-			if err == nil {
-				c.Close()
-				slog.Error("the exit node became reachable as soon as the kill switch was lifted, so the kill switch is turned OFF for this session to keep you connected. Please send this log.",
-					"facts_now", route.NetworkFacts(ctx))
-				return true
-			}
-		}
-	}
-	slog.Info("still unreachable with the kill switch lifted, so it isn't the cause; turning it back on")
-	if err := route.EnableKillSwitch(ctx, plan); err != nil {
-		slog.Error("could not turn the kill switch back on", "err", err)
-		return true
-	}
 	return false
 }
 
