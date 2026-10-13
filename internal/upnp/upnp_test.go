@@ -3,6 +3,7 @@ package upnp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -23,9 +24,14 @@ type fakeGW struct {
 	adds, deletes int
 	lastLease     uint32
 	lastClient    string
+	conflict      bool   // answer UPnP 718
+	holder        string // who holds the port
 }
 
 func (f *fakeGW) AddPortMappingCtx(_ context.Context, _ string, _ uint16, _ string, _ uint16, client string, _ bool, _ string, lease uint32) error {
+	if f.conflict {
+		return errors.New("SOAP fault: UPnPError 718 ConflictInMappingEntry")
+	}
 	if f.permanentOnly && lease != 0 {
 		return errors.New("725 OnlyPermanentLeasesSupported")
 	}
@@ -73,4 +79,30 @@ func TestOpenReturnsByDeadline(t *testing.T) {
 		t.Skip("a UPnP router is present on this network")
 	}
 	t.Logf("as expected without a router: %v", err)
+}
+
+func (f *fakeGW) GetSpecificPortMappingEntryCtx(context.Context, string, uint16, string) (uint16, string, bool, string, uint32, error) {
+	if f.holder == "" {
+		return 0, "", false, "", 0, errors.New("714 NoSuchEntryInArray")
+	}
+	return 443, f.holder, true, "Backhaul exit node", 0, nil
+}
+
+// A port already forwarded elsewhere (UPnP 718) is reported with its holder.
+func TestConflictNamesTheOtherDevice(t *testing.T) {
+	gw := &fakeGW{conflict: true, holder: "192.168.88.13"}
+	m := &Mapping{gw: gw, port: 443, lanIP: "192.168.88.45", lease: 3600}
+	err := m.add(context.Background())
+	if err == nil || !isConflict(err) {
+		t.Fatalf("want a conflict, got %v", err)
+	}
+	_, holder, _, desc, _, _ := gw.GetSpecificPortMappingEntryCtx(context.Background(), "", 443, "TCP")
+	ce := &ConflictError{Port: 443, Holder: holder, Desc: desc}
+	if got := ce.Error(); got != "port 443 is already forwarded to 192.168.88.13 (Backhaul exit node)" {
+		t.Fatal(got)
+	}
+	var target *ConflictError
+	if !errors.As(fmt.Errorf("router refused the port forward: %w", ce), &target) || target.Holder != "192.168.88.13" {
+		t.Fatal("ConflictError not reachable with errors.As")
+	}
 }

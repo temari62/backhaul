@@ -43,6 +43,12 @@ var xrayExe []byte
 //go:embed bundle/wintun.dll
 var wintunDLL []byte
 
+// wstunnel needs the Visual C++ runtime, which not every PC has
+// (exit status 0xc0000135 = DLL not found); Windows looks next to the exe.
+//
+//go:embed bundle/vcruntime140.dll
+var vcruntimeDLL []byte
+
 const (
 	windowTitle = "Backhaul"
 	mutexName   = `Local\BackhaulDesktopApp`
@@ -348,6 +354,9 @@ func installBundle(dataDir string) (wst, xray string, err error) {
 	}
 	wst = filepath.Join(bin, "wstunnel-"+config.DefaultWstunnelVersion+".exe")
 	if err := unpack(wst, wstunnelExe); err != nil {
+		return "", "", err
+	}
+	if err := unpack(filepath.Join(bin, "vcruntime140.dll"), vcruntimeDLL); err != nil {
 		return "", "", err
 	}
 	xray = filepath.Join(bin, "xray-"+config.DefaultXrayVersion+".exe")

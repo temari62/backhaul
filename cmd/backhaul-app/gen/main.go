@@ -69,6 +69,19 @@ func main() {
 	must(err)
 	must(os.WriteFile(filepath.Join(bundle, "xray.exe"), xexe, 0o644))
 
+	// vcruntime140.dll: wstunnel (an MSVC build) needs it, and Windows doesn't
+	// ship it — only the Visual C++ Redistributable does. Microsoft allows
+	// app-local copies; take the build machine's (x64 Windows, current VC++).
+	sysDir := os.Getenv("SystemRoot")
+	if *arch != "amd64" || sysDir == "" {
+		log.Fatalf("vcruntime140.dll: build the bundle on 64-bit Windows for -arch amd64")
+	}
+	vc, err := os.ReadFile(filepath.Join(sysDir, "System32", "vcruntime140.dll"))
+	if err != nil {
+		log.Fatalf("vcruntime140.dll: %v (install the Visual C++ Redistributable x64 on the build machine)", err)
+	}
+	must(os.WriteFile(filepath.Join(bundle, "vcruntime140.dll"), vc, 0o644))
+
 	// icon
 	res := filepath.Join(*dir, "winres")
 	must(os.MkdirAll(res, 0o755))

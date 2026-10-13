@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -235,6 +236,17 @@ func openRouterPort(ctx context.Context, c *config.Config, lanIP string) (string
 	dctx, cancel := context.WithTimeout(ctx, upnpTimeout)
 	defer cancel()
 	m, err := upnp.Open(dctx, port, lanIP)
+	if ce := (*upnp.ConflictError)(nil); errors.As(err, &ce) {
+		alt := "another port"
+		if c.Transport.Kind == config.TransportCloudflare {
+			alt = "another Cloudflare port (2053, 2083, 2087, 2096 or 8443)"
+		}
+		msg := fmt.Sprintf("Your router already sends port %d to another PC (%s), probably your other exit node: "+
+			"one internet address can give a port to only one PC. Stop that exit node, or set this one up again with %s "+
+			"(Share → Reset…, then Advanced → Port).", port, holderOr(ce), alt)
+		slog.Error(msg)
+		return msg, nil
+	}
 	if err != nil {
 		slog.Warn("could not open the router port automatically; forward it manually", "port", port, "to", lanIP, "reason", err)
 		return manual + " — automatic setup (UPnP) didn't work: " + err.Error(), nil
@@ -315,4 +327,11 @@ func (e *Env) serveTransport(ctx context.Context, cl *cleanup) (transport.Transp
 		opts.RestrictTo = wgLocal
 	}
 	return transport.NewWstunnel(opts), opts, nil
+}
+
+func holderOr(ce *upnp.ConflictError) string {
+	if ce.Holder == "" {
+		return "address unknown"
+	}
+	return ce.Holder
 }

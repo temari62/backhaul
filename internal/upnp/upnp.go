@@ -31,6 +31,8 @@ type gateway interface {
 		intClient string, enabled bool, desc string, lease uint32) error
 	DeletePortMappingCtx(ctx context.Context, remoteHost string, extPort uint16, proto string) error
 	GetExternalIPAddressCtx(ctx context.Context) (string, error)
+	GetSpecificPortMappingEntryCtx(ctx context.Context, remoteHost string, extPort uint16, proto string) (
+		intPort uint16, intClient string, enabled bool, desc string, lease uint32, err error)
 }
 
 // discover finds UPnP internet gateways on the LAN.
@@ -123,6 +125,13 @@ func open(ctx context.Context, port int, lanIP string) (*Mapping, error) {
 		m := &Mapping{gw: gw, port: uint16(port), lanIP: lanIP, lease: uint32(Lease / time.Second)}
 		if err := m.add(ctx); err != nil {
 			lastErr = err
+			if isConflict(err) {
+				ce := &ConflictError{Port: port}
+				if _, holder, _, desc, _, qerr := gw.GetSpecificPortMappingEntryCtx(ctx, "", uint16(port), "TCP"); qerr == nil {
+					ce.Holder, ce.Desc = strings.TrimSpace(holder), strings.TrimSpace(desc)
+				}
+				lastErr = ce
+			}
 			continue
 		}
 		if ip, err := gw.GetExternalIPAddressCtx(ctx); err == nil {
@@ -186,4 +195,29 @@ func BehindCarrierNAT(wanIP string) bool {
 	}
 	a = a.Unmap()
 	return cgnat.Contains(a) || a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast()
+}
+
+// ConflictError means the router already forwards the port to another
+// device (UPnP error 718) — typically a second exit node on the same home
+// network: one public IP can forward a port to only one PC.
+type ConflictError struct {
+	Port   int
+	Holder string // LAN address the port goes to now ("" if the router won't say)
+	Desc   string // that mapping's description
+}
+
+func (e *ConflictError) Error() string {
+	who := "another device on your network"
+	if e.Holder != "" {
+		who = e.Holder
+		if e.Desc != "" {
+			who += " (" + e.Desc + ")"
+		}
+	}
+	return fmt.Sprintf("port %d is already forwarded to %s", e.Port, who)
+}
+
+func isConflict(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "718") || strings.Contains(s, "ConflictInMappingEntry")
 }
