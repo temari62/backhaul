@@ -186,6 +186,76 @@ persisted undo journal first. You can also run `sudo backhaul doctor --recover` 
 
 ---
 
+## Exit node on an Ubuntu VPS
+
+A rented Linux server (VPS) can be the exit node instead of a home PC. It's always on and needs no
+router setup.
+
+**What you need:**
+- Ubuntu 22.04 or 24.04 with a public IPv4 address.
+- Inbound TCP 443 allowed in the provider's firewall.
+
+From China, use the Cloudflare disguise with your own domain, because connecting straight to a VPS
+address tends to get that address blocked. The same guide is in the Windows app under **?**.
+
+1. **Copy the Linux program to the VPS.** Use `backhaul_linux_arm64` instead if `uname -m` on the
+   VPS prints `aarch64`.
+
+   ```sh
+   scp backhaul_linux_amd64 root@VPS_IP:/usr/local/bin/backhaul
+   ```
+
+2. **Prepare the VPS** (as root):
+
+   ```sh
+   chmod +x /usr/local/bin/backhaul
+   apt update && apt install -y nftables
+   ufw status | grep -q active && ufw allow 443/tcp
+   ```
+
+3. **Set it up.** Pick one of the two commands. Both print the pairing code.
+
+   ```sh
+   # Cloudflare (API token as described above)
+   backhaul setup --role serve --transport cloudflare --endpoint vps.yourdomain.com --cloudflare-token YOUR_TOKEN --yes
+   # or REALITY
+   backhaul setup --role serve --transport reality --endpoint VPS_IP --yes
+   ```
+
+4. **Run it as a service.** This starts it at boot and restarts it if it stops.
+
+   ```sh
+   cat > /etc/systemd/system/backhaul.service <<'EOF'
+   [Unit]
+   Description=Backhaul exit node
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   ExecStart=/usr/local/bin/backhaul serve
+   Restart=always
+   RestartSec=5
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+   systemctl daemon-reload && systemctl enable --now backhaul
+   ```
+
+5. **Pair.** `backhaul pairing` prints the code again. On the client, go to **Connect → + Add**, paste
+   it, then click **Connect**.
+
+**Checking on it:** `backhaul status` shows the tunnel state, and `journalctl -u backhaul -f`
+follows the log.
+
+**Changing the disguise later:** run `setup` again with `--force`, then
+`systemctl restart backhaul`, and pair again.
+
+A machine with its own public address skips the home-router step automatically: no UPnP and no
+port forward.
+
+---
+
 ## Commands
 
 | Command | What it does |

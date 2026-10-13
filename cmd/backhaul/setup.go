@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"backhaul/internal/osutil"
 	"backhaul/internal/pairing"
 	"backhaul/internal/tlspin"
+	"backhaul/internal/upnp"
 )
 
 type setupFlags struct {
@@ -337,6 +339,14 @@ Next steps on this machine:
 	lan := "<this machine's LAN IP>"
 	if ip := lanIP(); ip != "" {
 		lan = ip
+	}
+	if a, err := netip.ParseAddr(lan); err == nil && a.IsGlobalUnicast() && !a.IsPrivate() && !upnp.BehindCarrierNAT(lan) {
+		// A server with its own public address (e.g. a VPS): no home router.
+		fmt.Printf(`  1. Allow inbound TCP %d in this server's firewall (and in the provider's firewall).
+  2. Start the exit node:   %s   (or run it as a systemd service; see the README)
+  3. Verify:                backhaul doctor
+`, port, elevated("backhaul serve"))
+		return
 	}
 	fmt.Printf(`  1. On your home router, forward TCP %d → %s:%d (and give this machine a DHCP reservation).
   2. Make sure %s keeps pointing at your home IP (configure [ddns] or your DNS provider).

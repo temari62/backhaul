@@ -164,6 +164,22 @@ dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; backgro
 dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px); }
 .dlg { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
 .dlg h3 { margin: 0; font: 600 16px "Segoe UI Variable Display", "Segoe UI", sans-serif; }
+/* Help */
+dialog.help { max-width: 540px; }
+.help .dlg { max-height: calc(100vh - 60px); overflow: auto; }
+.guide { font-size: 13px; line-height: 1.5; }
+.guide details { border-top: 1px solid var(--line); padding: 8px 0; }
+.guide details summary { cursor: pointer; font-weight: 600; list-style: none; }
+.guide details summary::-webkit-details-marker { display: none; }
+.guide details summary::before { content: "›"; display: inline-block; width: 14px; transition: transform .2s; }
+.guide details[open] summary::before { transform: rotate(90deg); }
+.guide ol { margin: 8px 0 0; padding-left: 20px; } .guide li { margin-bottom: 8px; }
+.guide p { margin: 6px 0; }
+.guide .code { position: relative; margin: 6px 0; }
+.guide pre { margin: 0; padding: 8px 10px; padding-right: 54px; border-radius: 8px; background: var(--field); border: 1px solid var(--line);
+  font: 11.5px/1.5 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-all; -webkit-user-select: text; user-select: text; }
+.guide .code button { position: absolute; top: 4px; right: 4px; padding: 3px 8px; font-size: 11.5px; }
+.guide code { font: 12px "Cascadia Mono", Consolas, monospace; background: var(--field); padding: 1px 4px; border-radius: 4px; }
 .dlg .actions { display: flex; justify-content: flex-end; gap: 8px; }
 .qr { display: flex; gap: 14px; align-items: center; }
 .qr img { width: 132px; height: 132px; border-radius: 8px; background: #fff; padding: 5px; image-rendering: pixelated; flex: none; }
@@ -193,6 +209,7 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
       <button class="tab" id="tabServe" role="tab" onclick="showTab('serve')"><span class="dot" id="dotServe" hidden></span>Share</button>
     </nav>
     <div class="winbtns">
+      <button class="winbtn" onclick="openHelp()" title="Help and guides"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5"/><path d="M12 17.5h.01"/></svg></button>
       <button class="winbtn" onclick="openSettings()" title="Settings"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
       <button class="winbtn" onclick="bh('minimize')" title="Minimize"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6h8" stroke="currentColor" stroke-width="1.3"/></svg></button>
       <button class="winbtn close" onclick="bh('hide')" title="Close (keeps running in the tray)"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.3"/></svg></button>
@@ -297,6 +314,74 @@ dialog::backdrop { background: rgba(8, 10, 18, .45); backdrop-filter: blur(3px);
   </details>
   <div class="foot" id="footNote">Closing the window keeps Backhaul running in the tray. Right-click the tray icon → Quit to exit.</div>
 </div>
+
+<dialog id="helpDlg" class="help">
+  <div class="dlg">
+    <h3>Help</h3>
+    <div class="guide">
+      <details open>
+        <summary>Exit node on an Ubuntu VPS</summary>
+        <p>A rented Linux server (VPS) can be your exit node instead of a home PC: it's always on and needs no router setup.
+          You need Ubuntu 22.04 or 24.04 with a public IPv4 address, and in the provider's firewall, inbound <b>TCP 443</b> allowed.</p>
+        <p>For use from China, choose the <b>Cloudflare</b> disguise with your own domain (step 3). Connecting straight to a VPS
+          address tends to get that address blocked.</p>
+        <ol>
+          <li><b>Copy the Linux program to the VPS.</b> Get <code>backhaul_linux_amd64</code> (or <code>backhaul_linux_arm64</code>
+            for an ARM server — <code>uname -m</code> on the VPS says <code>aarch64</code>). Then, in PowerShell in that file's folder:
+            <div class="code"><pre>scp backhaul_linux_amd64 root@VPS_IP:/usr/local/bin/backhaul</pre><button class="secondary" onclick="copyCode(this)">Copy</button></div></li>
+          <li><b>Log in and prepare it:</b> <code>ssh root@VPS_IP</code>, then:
+            <div class="code"><pre>chmod +x /usr/local/bin/backhaul
+apt update &amp;&amp; apt install -y nftables
+ufw status | grep -q active &amp;&amp; ufw allow 443/tcp</pre><button class="secondary" onclick="copyCode(this)">Copy</button></div></li>
+          <li><b>Set it up.</b> With Cloudflare (create a Cloudflare API token as for the Windows exit node; pick a new name such as <code>vps.yourdomain.com</code>):
+            <div class="code"><pre>backhaul setup --role serve --transport cloudflare --endpoint vps.yourdomain.com --cloudflare-token YOUR_TOKEN --yes</pre><button class="secondary" onclick="copyCode(this)">Copy</button></div>
+            Or with REALITY (outside China, or to try):
+            <div class="code"><pre>backhaul setup --role serve --transport reality --endpoint VPS_IP --yes</pre><button class="secondary" onclick="copyCode(this)">Copy</button></div>
+            It prints a <b>pairing code</b>.</li>
+          <li><b>Run it as a service</b> (starts at boot, restarts if it stops):
+            <div class="code"><pre>cat &gt; /etc/systemd/system/backhaul.service &lt;&lt;'EOF'
+[Unit]
+Description=Backhaul exit node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/backhaul serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload &amp;&amp; systemctl enable --now backhaul</pre><button class="secondary" onclick="copyCode(this)">Copy</button></div></li>
+          <li><b>Pair this PC:</b> show the code with <code>backhaul pairing</code>, copy it, then here: <b>Connect → + Add</b> → paste → <b>Save</b> → <b>Connect</b>.</li>
+        </ol>
+        <p>Check on it with <code>backhaul status</code> or <code>journalctl -u backhaul -f</code>. To change the disguise later, run
+          <code>backhaul setup</code> again with <code>--force</code>, then <code>systemctl restart backhaul</code> and pair again.</p>
+        <p class="note">The Linux exit node has passed automated tests but hasn't run on a real VPS yet. If something goes wrong,
+          the output of <code>journalctl -u backhaul -n 100</code> shows why.</p>
+      </details>
+      <details>
+        <summary>Cloudflare: use your own domain</summary>
+        <ol>
+          <li>Add your domain at <b>dash.cloudflare.com</b> (Free plan); at your registrar, set the two Cloudflare nameservers it shows.</li>
+          <li>Cloudflare → My Profile → API Tokens → Create Token → Custom: <b>Zone·Zone·Read</b>, <b>Zone·DNS·Edit</b>, <b>Zone·Zone Settings·Edit</b> for your domain.</li>
+          <li>On the exit node: <b>Share</b> → Disguise <b>Cloudflare</b> → a hostname such as <code>cdn.yourdomain.com</code> → paste the token → <b>Set up</b>.</li>
+        </ol>
+        <p>Two exit nodes at the same home share one internet address, so the second needs another port: under <b>Advanced</b>, use 2053, 2083, 2087, 2096 or 8443.</p>
+      </details>
+      <details>
+        <summary>Can't connect?</summary>
+        <p>Open <code>https://your-hostname/</code> in a browser: <b>400 Bad Request</b> means the exit node is reachable;
+          <b>522</b> means Cloudflare can't reach it — check that the exit node is on and shows <b>Sharing</b>, your home internet works,
+          and the router forwards the port to it.</p>
+        <p>Compare the <b>Pairing ID</b> in the Connect list with the one on the exit node's Share tab: they must match.</p>
+        <p>The <b>Activity</b> log (bottom of the window) shows what happened, step by step.</p>
+      </details>
+    </div>
+    <div class="actions"><button class="primary" onclick="helpDlg.close()">Done</button></div>
+  </div>
+</dialog>
 
 <dialog id="settingsDlg">
   <div class="dlg">
@@ -507,6 +592,12 @@ function renderNodes(s) {
 }
 function cancelAdd() { $('pairCode').value = ''; $('nodeName').value = ''; $('addBox').hidden = true; }
 function openSettings() { loadAuto(); loadStealth(); $('settingsDlg').showModal(); }
+function openHelp() { $('helpDlg').showModal(); }
+function copyCode(btn) {
+  const pre = btn.parentNode.querySelector('pre'), r = document.createRange();
+  r.selectNodeContents(pre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  document.execCommand('copy'); sel.removeAllRanges(); toast('Copied');
+}
 function showStealth(on) {
   $('stealthToggle').checked = on;
   $('footNote').textContent = on

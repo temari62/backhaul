@@ -233,6 +233,11 @@ const upnpRetryEvery = 2 * time.Minute
 func openRouterPort(ctx context.Context, c *config.Config, lanIP string, onChange func(string)) (string, func()) {
 	port := c.Transport.Port
 	manual := fmt.Sprintf("Forward TCP %d on your router to %s (this PC)", port, lanIP)
+	if a, err := netip.ParseAddr(lanIP); err == nil && a.IsGlobalUnicast() && !a.IsPrivate() && !upnp.BehindCarrierNAT(lanIP) {
+		// A server (e.g. a VPS) with a public address: no home router.
+		slog.Info("this machine has a public address; no router port forward needed", "address", lanIP, "port", port)
+		return fmt.Sprintf("This machine has a public address (%s); make sure TCP %d is allowed in its firewall.", lanIP, port), nil
+	}
 	if !c.Reachability.UPnP || lanIP == "" {
 		slog.Info("router port forward needed", "port", port, "to", lanIP)
 		return manual, nil
