@@ -232,6 +232,7 @@ address tends to get that address blocked. The same guide is in the Windows app 
    Wants=network-online.target
 
    [Service]
+   Environment=HOME=/root
    ExecStart=/usr/local/bin/backhaul serve
    Restart=always
    RestartSec=5

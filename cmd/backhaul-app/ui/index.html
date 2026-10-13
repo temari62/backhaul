@@ -347,6 +347,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+Environment=HOME=/root
 ExecStart=/usr/local/bin/backhaul serve
 Restart=always
 RestartSec=5

@@ -103,22 +103,53 @@ func trayWindow() uintptr {
 	}
 }
 
-// applyTrayVisibility hides or shows the tray icon to match stealth mode.
-// It is re-applied periodically: Explorer restarts re-add the icon.
+var (
+	procLoadImageW       = user32.NewProc("LoadImageW")
+	procGetModuleHandleW = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetModuleHandleW")
+	// trayRemoved: stealth mode deleted the icon (as opposed to merely
+	// marking it hidden, which the Windows 11 taskbar ignores).
+	trayRemoved atomic.Bool
+	// trayRefresh asks the tray loop to re-send the icon and tooltip after
+	// the icon was added back.
+	trayRefresh atomic.Bool
+)
+
+// applyTrayVisibility removes or restores the tray icon to match stealth
+// mode. It is re-applied periodically: an Explorer restart makes the tray
+// library add the icon again.
 func applyTrayVisibility() {
 	h := trayWindow()
 	if h == 0 {
 		return
 	}
-	const nimModify, nifState, nisHidden = 1, 0x8, 0x1
-	d := trayIconData{wnd: h, id: 100, flags: nifState, mask: nisHidden}
+	const (
+		nimAdd, nimDelete     = 0, 2
+		nifMessage, nifIcon   = 0x1, 0x2
+		trayID, trayCallback  = 100, 0x0400 + 1 // fyne.io/systray: icon ID and WM_USER+1
+		imageIcon, lrShared   = 1, 0x8000
+		appIconID, smallIconS = 1, 16
+	)
+	d := trayIconData{wnd: h, id: trayID}
 	d.size = uint32(unsafe.Sizeof(d))
 	if stealth.Load() {
-		d.state = nisHidden
+		procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&d))) // fails harmlessly if already gone
+		trayRemoved.Store(true)
+		return
 	}
-	if r, _, err := procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&d))); r == 0 {
-		trayWarnOnce.Do(func() { slog.Warn("could not change the tray icon's visibility", "err", err) })
+	if !trayRemoved.Load() {
+		return
 	}
+	// Add it back the way the tray library registers it, with the app icon;
+	// the library then updates picture and tooltip as usual.
+	d.flags, d.cbMsg = nifMessage|nifIcon, trayCallback
+	self, _, _ := procGetModuleHandleW.Call(0) // this exe: its icon resource
+	d.icon, _, _ = procLoadImageW.Call(self, appIconID, imageIcon, smallIconS, smallIconS, lrShared)
+	if r, _, err := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&d))); r == 0 {
+		trayWarnOnce.Do(func() { slog.Warn("could not show the tray icon again (restart Backhaul to get it back)", "err", err) })
+		return
+	}
+	trayRemoved.Store(false)
+	trayRefresh.Store(true)
 }
 
 var trayWarnOnce sync.Once

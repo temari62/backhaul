@@ -1,6 +1,7 @@
 package osutil
 
 import (
+	"fmt"
 	"os"
 	"os/user"
 	"runtime"
@@ -23,5 +24,14 @@ func UserHome() (string, error) {
 			}
 		}
 	}
-	return os.UserHomeDir()
+	if h, err := os.UserHomeDir(); err == nil {
+		return h, nil
+	}
+	// No $HOME, as for a systemd system service: ask the user database
+	// (root → /root), so the service finds the config `backhaul setup` wrote.
+	u, err := user.Current()
+	if err != nil || u.HomeDir == "" {
+		return "", fmt.Errorf("can't find the home directory ($HOME is not set); set BACKHAUL_CONFIG_DIR or HOME")
+	}
+	return u.HomeDir, nil
 }

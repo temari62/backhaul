@@ -244,6 +244,9 @@ func runTray(w webview2.WebView, b *gui.Backend) {
 					if tick%5 == 0 {
 						applyTrayVisibility() // Explorer restarts re-add the icon
 					}
+					if trayRefresh.Swap(false) {
+						last = "" // icon was added back: send picture and tooltip again
+					}
 					text, phase := trayStatus(b.State())
 					if text != last {
 						systray.SetIcon(tray.Icon(phase))
