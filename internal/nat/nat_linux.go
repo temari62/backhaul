@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"backhaul/internal/osutil"
@@ -67,31 +68,52 @@ func enable(ctx context.Context, p Plan, j *undo.Journal) error {
 	} else if err := iptablesNAT(ctx, p, j); err != nil {
 		return err
 	}
-	// A FORWARD policy of DROP set by iptables (Docker, ufw) would still
-	// drop our packets even with the nft accept, so open the path there too.
-	// Only when such a policy exists: touching iptables otherwise creates
-	// tables that outlive our rules, and teardown would not be exact.
-	if osutil.Has("iptables") && forwardPolicyDrop(ctx) {
-		for _, r := range [][]string{
-			{"FORWARD", "-i", p.Iface, "-j", "ACCEPT"},
-			{"FORWARD", "-o", p.Iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
-		} {
-			if _, err := osutil.Run(ctx, "iptables", append([]string{"-I"}, r...)...); err == nil {
-				_ = j.Push(undo.Exec("remove forward rule", append([]string{"iptables", "-D"}, r...)...))
-			}
-		}
+	// A DROP policy set by iptables (Docker, ufw) would still drop our packets
+	// even with the nft accepts, so open the path there too: forwarding, and
+	// input from the tunnel (the DNS forwarder listens on the tunnel IP).
+	fwd := [][]string{
+		{"-i", p.Iface, "-j", "ACCEPT"},
+		{"-o", p.Iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+	}
+	in := [][]string{{"-i", p.Iface, "-j", "ACCEPT"}}
+	insertAccept(ctx, "iptables", "FORWARD", fwd, j)
+	insertAccept(ctx, "iptables", "INPUT", in, j)
+	if p.Subnet6.IsValid() {
+		insertAccept(ctx, "ip6tables", "FORWARD", fwd, j)
+		insertAccept(ctx, "ip6tables", "INPUT", in, j)
 	}
 	return nil
 }
 
-// forwardPolicyDrop reports whether an iptables FORWARD chain drops by default.
-func forwardPolicyDrop(ctx context.Context) bool {
+// insertAccept puts rules at the top of an iptables chain, journaling their
+// removal, but only if the chain drops by default: touching iptables
+// otherwise creates tables that outlive our rules, and teardown would not be
+// exact.
+func insertAccept(ctx context.Context, bin, chain string, rules [][]string, j *undo.Journal) {
+	if !osutil.Has(bin) || !chainPolicyDrop(ctx, bin, chain) {
+		return
+	}
+	for _, r := range rules {
+		args := append([]string{chain}, r...)
+		if _, err := osutil.Run(ctx, bin, append([]string{"-I"}, args...)...); err == nil {
+			_ = j.Push(undo.Exec("remove "+strings.ToLower(chain)+" rule", append([]string{bin, "-D"}, args...)...))
+		}
+	}
+}
+
+// chainPolicyDrop reports whether an iptables (bin "iptables") or ip6tables
+// chain drops by default, e.g. ufw's INPUT.
+func chainPolicyDrop(ctx context.Context, bin, chain string) bool {
 	if osutil.Has("nft") {
-		out, err := osutil.Run(ctx, "nft", "list", "chain", "ip", "filter", "FORWARD")
+		family := "ip"
+		if bin == "ip6tables" {
+			family = "ip6"
+		}
+		out, err := osutil.Run(ctx, "nft", "list", "chain", family, "filter", chain)
 		return err == nil && strings.Contains(out, "policy drop")
 	}
-	out, err := osutil.Run(ctx, "iptables", "-S", "FORWARD")
-	return err == nil && strings.Contains(out, "-P FORWARD DROP")
+	out, err := osutil.Run(ctx, bin, "-S", chain)
+	return err == nil && strings.Contains(out, "-P "+chain+" DROP")
 }
 
 func iptablesNAT(ctx context.Context, p Plan, j *undo.Journal) error {
@@ -118,6 +140,12 @@ func iptablesNAT(ctx context.Context, p Plan, j *undo.Journal) error {
 // Available: kernel NAT is always present on Linux.
 func Available(context.Context) bool { return true }
 
-// AllowInbound is a no-op on Linux: there is no default inbound firewall.
-// TODO(spec): open the port in ufw/firewalld when they are active.
-func AllowInbound(context.Context, int, *undo.Journal) error { return nil }
+// AllowInbound opens TCP port for the exit node's listener when an iptables
+// INPUT policy drops by default (ufw). Firewalls kept purely in nftables
+// (e.g. firewalld's nftables backend) are not handled.
+func AllowInbound(ctx context.Context, port int, j *undo.Journal) error {
+	r := [][]string{{"-p", "tcp", "--dport", strconv.Itoa(port), "-j", "ACCEPT"}}
+	insertAccept(ctx, "iptables", "INPUT", r, j)
+	insertAccept(ctx, "ip6tables", "INPUT", r, j)
+	return nil
+}

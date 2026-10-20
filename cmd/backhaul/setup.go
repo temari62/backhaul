@@ -21,6 +21,7 @@ import (
 	"backhaul/internal/ddns"
 	"backhaul/internal/osutil"
 	"backhaul/internal/pairing"
+	"backhaul/internal/state"
 	"backhaul/internal/tlspin"
 	"backhaul/internal/upnp"
 )
@@ -291,6 +292,15 @@ func runSetup(ctx context.Context, g *globals, f *setupFlags, subnet6Set bool) e
 		return err
 	}
 	printExitNodeNextSteps(p, res, port, reach)
+	if rt, ok, _ := state.Read(p.State()); ok && osutil.ProcessAlive(rt.PID) {
+		// serve reads keys only at start: until it restarts, the new pairing
+		// code won't work.
+		fmt.Printf(`
+IMPORTANT: an exit node is already running here (pid %d) with the OLD keys.
+Restart it so the new pairing code works:
+  systemctl restart backhaul      (if it runs as a service; otherwise stop and start backhaul serve)
+`, rt.PID)
+	}
 	if f.qr {
 		return printQR(res.Blob)
 	}

@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -193,5 +194,22 @@ func TestXrayCutRE(t *testing.T) {
 	}
 	if xrayCutRE.MatchString("2026/10/09 08:19:48 [Info] proxy/vless/outbound: tunneling request to udp:127.0.0.1:51820 via 50.46.184.113:443") {
 		t.Fatal("normal traffic must not trigger a restart")
+	}
+}
+
+// Repeated "received real certificate" means the pairing doesn't match: say
+// so once, plainly.
+func TestRealityRejectedExplainedOnce(t *testing.T) {
+	var logs strings.Builder
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&lockedWriter{w: &logs}, nil)))
+	defer slog.SetDefault(old)
+	h := xrayLogHandler(RoleClient)
+	line := "2026/10/13 08:47:15.125581 [Error] [1794231835] transport/internet/reality: REALITY: received real certificate (potential MITM or redirection)"
+	for i := 0; i < 10; i++ {
+		h(line)
+	}
+	if n := strings.Count(logs.String(), "doesn't accept this PC's pairing"); n != 1 {
+		t.Fatalf("explanation logged %d times; logs:\n%s", n, logs.String())
 	}
 }

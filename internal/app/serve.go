@@ -99,7 +99,7 @@ func Serve(ctx context.Context, e *Env) (err error) {
 	cl.push("close tunnel adapter", func(ctx context.Context) { eng.Down(ctx) })
 	rt.Iface = eng.Name()
 
-	// 2. Let the client in through the OS firewall (Windows blocks inbound by default).
+	// 2. Let the client in through the OS firewall (Windows, or ufw on Linux).
 	if c.Reachability.Mode == config.ReachPortForward {
 		if osutil.IsElevated() {
 			if err := nat.AllowInbound(ctx, c.Transport.Port, j); err != nil {

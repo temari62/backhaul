@@ -149,6 +149,7 @@ var xrayAcceptRE = regexp.MustCompile(`from (\S+) accepted `)
 // xrayLogHandler returns the per-line hook for a role: on the exit node it
 // also reports each accepted tunnel connection and where it came from.
 func xrayLogHandler(role string) func(string) {
+	rejected := 0
 	return func(line string) {
 		if role == RoleServer {
 			if m := xrayAcceptRE.FindStringSubmatch(line); m != nil {
@@ -156,9 +157,22 @@ func xrayLogHandler(role string) func(string) {
 				return
 			}
 		}
+		if role == RoleClient && xrayRejectedRE.MatchString(line) {
+			// The exit node answered as the real website: it didn't accept
+			// this PC's REALITY credentials. Explain once, in plain words.
+			if rejected++; rejected == 3 {
+				slog.Error("the exit node doesn't accept this PC's pairing: its keys changed (was it set up again?). " +
+					"On the exit node, get the current pairing code (Share → Pairing code, or `backhaul pairing` on Linux), " +
+					"add it here with + Add, and remove the old entry.")
+			}
+		}
 		xrayLogLine(line)
 	}
 }
+
+// xrayRejectedRE: the REALITY server forwarded us to its camouflage site,
+// i.e. it did not recognise our key, short ID, server name or user ID.
+var xrayRejectedRE = regexp.MustCompile(`REALITY: received real certificate`)
 
 // xrayLogLine surfaces the Xray log lines that matter; everything else stays
 // at debug level. Xray runs at "info" so failed dials are visible.

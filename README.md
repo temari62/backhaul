@@ -213,6 +213,10 @@ address tends to get that address blocked. The same guide is in the Windows app 
    ufw status | grep -q active && ufw allow 443/tcp
    ```
 
+   Port 443 must be free: if `ss -tlnp | grep :443` shows a web server (nginx, Apache), move it to
+   another port first. While it runs, Backhaul itself lets the tunnel through ufw (forwarding and
+   DNS from the client); nothing else in ufw needs changing.
+
 3. **Set it up.** Pick one of the two commands. Both print the pairing code.
 
    ```sh
