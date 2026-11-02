@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && cgo
 
 // Command backhaul-app-mac is the all-in-one macOS desktop app: one binary
 // with a WKWebView UI (the shared internal/webui page), the exit node
