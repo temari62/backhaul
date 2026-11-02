@@ -26,6 +26,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"backhaul/internal/app"
+	"backhaul/internal/buildinfo"
 	"backhaul/internal/config"
 	"backhaul/internal/gui"
 	"backhaul/internal/wg"
@@ -62,6 +63,36 @@ const rpcShim = `
   let seq = 0; const pending = {};
   window.__bhDone = (id, ok, v) => { const p = pending[id]; delete pending[id]; if (!p) return; ok ? p.res(v) : p.rej(new Error(v)); };
   window.bh = (m, ...a) => new Promise((res, rej) => { const id = ++seq; pending[id] = { res, rej }; window.__bh(id, m, JSON.stringify(a)); });
+})();`
+
+// updateBannerJS shows a slim bar at the top of the window when a newer
+// release exists, with an Install button that runs the in-app updater. It is
+// self-contained (it builds its own DOM and styles) so it doesn't depend on
+// the page's markup.
+const updateBannerJS = `
+(() => {
+  window.addEventListener('load', () => setTimeout(async () => {
+    let st; try { st = await bh('updateCheck'); } catch (e) { return; }
+    if (!st || !st.available) return;
+    const bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;display:flex;align-items:center;gap:10px;' +
+      'padding:8px 12px;font:13px system-ui,Segoe UI,sans-serif;color:#fff;' +
+      'background:linear-gradient(90deg,#4f46e5,#06b6d4);box-shadow:0 1px 6px rgba(0,0,0,.25)';
+    const msg = document.createElement('span');
+    msg.style.cssText = 'flex:1';
+    msg.textContent = 'Backhaul ' + st.latest + ' is available.';
+    const go = document.createElement('button');
+    go.textContent = 'Install';
+    go.style.cssText = 'border:0;border-radius:6px;padding:4px 12px;cursor:pointer;font:inherit;font-weight:600;background:#fff;color:#3730a3';
+    go.onclick = () => { go.disabled = true; msg.textContent = 'Downloading ' + st.latest + '… Backhaul will restart.'; bh('updateApply').catch(()=>{ msg.textContent = 'Update failed.'; go.disabled = false; }); };
+    const x = document.createElement('button');
+    x.textContent = '✕';
+    x.title = 'Dismiss';
+    x.style.cssText = 'border:0;background:transparent;color:#fff;cursor:pointer;font:inherit';
+    x.onclick = () => bar.remove();
+    bar.append(msg, go, x);
+    document.body.appendChild(bar);
+  }, 1500));
 })();`
 
 func main() {
@@ -146,6 +177,8 @@ func main() {
 		fatal(err.Error())
 	}
 	w.Init(rpcShim)
+	w.Init(updateBannerJS)
+	startUpdateWatch() // one background check; reveals the tray item if newer
 	if useRegion {
 		w.Init("window.__roundRegion = true;") // the page then draws the rounded border
 	}
@@ -308,6 +341,23 @@ func (r *rpc) dispatch(method string, a []json.RawMessage) (any, error) {
 	case "clearError":
 		r.b.ClearError()
 		return nil, nil
+	case "updateCheck":
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return checkForUpdate(ctx)
+	case "updateApply":
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		// applyUpdate starts the installer and schedules the quit; the context
+		// only needs to outlive the download, which it does via the goroutine.
+		go func() {
+			defer cancel()
+			if err := applyUpdate(ctx); err != nil {
+				slog.Error("update failed", "err", err)
+			}
+		}()
+		return nil, nil
+	case "version":
+		return buildinfo.Version, nil
 	case "__selftest":
 		if r.selftestOut == "" {
 			break

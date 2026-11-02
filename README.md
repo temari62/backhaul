@@ -88,15 +88,41 @@ Other things to know:
   `%LOCALAPPDATA%\Backhaul`.
 - **Requirements.** The Microsoft Edge **WebView2 Runtime**, which is built into Windows 11 and
   current Windows 10. If it's missing, Backhaul says so and links to the installer.
+- **Automatic updates.** On start, Backhaul checks GitHub for a newer release. If one exists, a bar
+  appears at the top of the window and an **Install update** item appears in the tray menu. Click
+  either to update: Backhaul downloads the new installer, **verifies its SHA-256** against the
+  release's `checksums.txt`, runs it silently, and restarts itself on the new version. It never
+  installs a download whose checksum isn't listed, so a tampered mirror can't swap the binary.
+  Nothing is downloaded or installed without a click. The repository checked is set by
+  `update.Repo` in `internal/update/update.go`.
 
-To build it:
+### Install it
+
+Download **`Backhaul-Setup-<version>.exe`** from the
+[releases page](https://github.com/temari62/backhaul/releases) and run it. It installs Backhaul to
+*Program Files*, adds Start Menu (and optional desktop) shortcuts, and registers an uninstaller in
+*Add or remove programs*. The single portable `Backhaul.exe` still works on its own if you'd rather
+not install.
+
+### Build it
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build-app.ps1     # → dist\Backhaul.exe
+powershell -ExecutionPolicy Bypass -File .\build-app.ps1                 # → dist\Backhaul.exe
+powershell -ExecutionPolicy Bypass -File .\build-installer.ps1           # → dist\Backhaul-Setup-<version>.exe
 ```
 
-The build fetches the pinned wstunnel and Wintun releases, verifies their SHA-256, and embeds
-them along with the icon and the administrator manifest.
+`build-app.ps1` fetches the pinned wstunnel and Wintun releases, verifies their SHA-256, and embeds
+them along with the icon and the administrator manifest. It stamps the version from the repo-root
+`VERSION` file into the binary (pass `-Version 0.5.0` to override); the updater compares that
+against GitHub releases.
+
+`build-installer.ps1` builds the app, then compiles `installer\backhaul.iss` with
+[Inno Setup 6](https://jrsoftware.org/isdl.php) (`ISCC.exe` must be on `PATH` or in its default
+install location). It prints the SHA-256 line to add to the release `checksums.txt`.
+
+**Cutting a release:** set `VERSION`, run `build-installer.ps1`, then create a GitHub release whose
+tag is `v<version>` and upload `Backhaul-Setup-<version>.exe` plus a `checksums.txt` that lists it
+(the line the script prints). The in-app updater on older installs picks it up from there.
 
 ---
 
@@ -258,6 +284,98 @@ follows the log.
 
 A machine with its own public address skips the home-router step automatically: no UPnP and no
 port forward.
+
+---
+
+## macOS
+
+A Mac can be either end of the tunnel. The GUI app is Windows-only, so on macOS you drive it from
+the terminal with the same commands as Linux. The one-time pairing in **One-time setup** above
+applies unchanged; this section covers only the Mac-specific parts: getting the binary, clearing
+Gatekeeper, and running an always-on exit node under launchd.
+
+**What you need:**
+- macOS 13 (Ventura) or later. The release binary `backhaul_darwin_arm64` is for Apple Silicon
+  (M1 and later). On an Intel Mac, build from source with Go 1.26+ (`make build`).
+- For an exit-node Mac reached from outside: TCP 443 forwarded to it on your home router, exactly
+  as in **Router port-forward** above.
+
+1. **Install the binary.**
+
+   ```sh
+   sudo install -m 755 backhaul_darwin_arm64 /usr/local/bin/backhaul
+   ```
+
+   If you downloaded it with a browser, macOS quarantines it and the first run is blocked. Clear
+   the flag once:
+
+   ```sh
+   sudo xattr -d com.apple.quarantine /usr/local/bin/backhaul
+   ```
+
+   A binary copied over with `scp` or `curl` is not quarantined and needs no step here. `serve` and
+   `connect` download the pinned wstunnel next to the binary on first run, so nothing else is
+   installed. There is no Wintun equivalent to fetch on macOS.
+
+2. **Run it.** Both subcommands need root, because they create a `utun` device and change routes,
+   DNS and the `pf` firewall. The kernel picks the `utun` number, so leave `interface` at its
+   default.
+
+   ```sh
+   # as the exit node
+   sudo backhaul serve
+   # or as the client
+   sudo backhaul connect          # --no-killswitch to disable the kill-switch for this session
+   backhaul status
+   backhaul doctor
+   ```
+
+   Press Ctrl+C, or run `backhaul disconnect` from another terminal, to stop. backhaul then
+   restores routes, DNS, firewall and NAT exactly as it found them.
+
+3. **Run an exit node at boot (optional).** For an always-on Mac exit node, install a LaunchDaemon
+   so it starts at boot as root and restarts if it stops. Run `backhaul setup` first so the config
+   exists under the user's home.
+
+   ```sh
+   sudo tee /Library/LaunchDaemons/com.backhaul.serve.plist >/dev/null <<'PLIST'
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0">
+   <dict>
+     <key>Label</key>            <string>com.backhaul.serve</string>
+     <key>ProgramArguments</key> <array>
+       <string>/usr/local/bin/backhaul</string>
+       <string>serve</string>
+     </array>
+     <key>EnvironmentVariables</key>
+     <dict><key>HOME</key><string>/Users/YOUR_USER</string></dict>
+     <key>RunAtLoad</key>        <true/>
+     <key>KeepAlive</key>        <true/>
+     <key>StandardOutPath</key>  <string>/var/log/backhaul.log</string>
+     <key>StandardErrorPath</key><string>/var/log/backhaul.log</string>
+   </dict>
+   </plist>
+   PLIST
+   sudo launchctl load /Library/LaunchDaemons/com.backhaul.serve.plist
+   ```
+
+   Set `HOME` to the account that holds `~/.config/backhaul`, because the daemon runs as root and
+   would otherwise read root's home. To stop and remove the service:
+
+   ```sh
+   sudo launchctl unload /Library/LaunchDaemons/com.backhaul.serve.plist
+   sudo rm /Library/LaunchDaemons/com.backhaul.serve.plist
+   ```
+
+4. **Pair.** `backhaul pairing` prints the code. Carry it to the client as in **One-time setup**.
+
+**Checking on it:** `backhaul status` shows the tunnel state, and `tail -f /var/log/backhaul.log`
+follows the daemon's log.
+
+**Tray app:** there is no prebuilt macOS tray, because it needs cgo (Cocoa). Build it on a Mac with
+`make tray` and put `backhaul-tray` next to the binary.
 
 ---
 

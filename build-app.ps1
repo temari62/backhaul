@@ -2,11 +2,24 @@
 # (WebView2 UI + exit node + client + embedded wstunnel and Wintun).
 #
 #   powershell -ExecutionPolicy Bypass -File .\build-app.ps1
+#   powershell -ExecutionPolicy Bypass -File .\build-app.ps1 -Version 0.5.0
+#
+# The version is stamped into the binary (buildinfo.Version), which the in-app
+# updater compares against GitHub releases. With no -Version, it reads the
+# repo-root VERSION file, falling back to "dev".
 #
 # Requires Go 1.26+ on PATH (or in %USERPROFILE%\sdk\go) and internet access
 # for the first run (pinned, checksum-verified downloads).
+param(
+    [string]$Version
+)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+
+if (-not $Version) {
+    if (Test-Path VERSION) { $Version = (Get-Content VERSION -Raw).Trim() }
+    if (-not $Version) { $Version = 'dev' }
+}
 
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     $sdk = Join-Path $env:USERPROFILE 'sdk\go\bin'
@@ -22,9 +35,10 @@ Write-Host '2/3  Embedding icon, version info and administrator manifest...'
 go run github.com/tc-hib/go-winres@v0.3.3 make --in cmd/backhaul-app/winres/winres.json --out cmd/backhaul-app/rsrc --arch amd64
 if ($LASTEXITCODE) { throw 'resource generation failed' }
 
-Write-Host '3/3  Building dist\Backhaul.exe...'
+Write-Host "3/3  Building dist\Backhaul.exe (version $Version)..."
 New-Item -ItemType Directory -Force dist | Out-Null
-go build -trimpath -ldflags '-s -w -H=windowsgui' -o dist\Backhaul.exe ./cmd/backhaul-app
+$ldflags = "-s -w -H=windowsgui -X backhaul/internal/buildinfo.Version=$Version"
+go build -trimpath -ldflags $ldflags -o dist\Backhaul.exe ./cmd/backhaul-app
 if ($LASTEXITCODE) { throw 'build failed' }
 
 $size = [math]::Round((Get-Item dist\Backhaul.exe).Length / 1MB, 1)

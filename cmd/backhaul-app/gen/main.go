@@ -28,9 +28,15 @@ import (
 func main() {
 	dir := flag.String("dir", "cmd/backhaul-app", "app directory")
 	arch := flag.String("arch", "amd64", "windows architecture to bundle")
+	iconOnly := flag.Bool("icon-only", false, "only (re)draw the icon; skip the component downloads")
 	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+
+	if *iconOnly {
+		drawIcons(*dir)
+		return
+	}
 
 	bundle := filepath.Join(*dir, "bundle")
 	must(os.MkdirAll(bundle, 0o755))
@@ -83,11 +89,17 @@ func main() {
 	must(os.WriteFile(filepath.Join(bundle, "vcruntime140.dll"), vc, 0o644))
 
 	// icon
-	res := filepath.Join(*dir, "winres")
+	drawIcons(*dir)
+	log.Printf("assets ready in %s", bundle)
+}
+
+// drawIcons writes the app icon PNGs that go-winres embeds into the exe.
+func drawIcons(appDir string) {
+	res := filepath.Join(appDir, "winres")
 	must(os.MkdirAll(res, 0o755))
 	must(os.WriteFile(filepath.Join(res, "icon.png"), drawIcon(256), 0o644))
 	must(os.WriteFile(filepath.Join(res, "icon16.png"), drawIcon(16), 0o644))
-	log.Printf("assets ready in %s and %s", bundle, res)
+	log.Printf("icon drawn in %s", res)
 }
 
 func must(err error) {
@@ -97,14 +109,26 @@ func must(err error) {
 }
 
 // drawIcon renders the logo: an indigo→cyan rounded square with two white
-// "tunnel" arcs and a dot, anti-aliased by 4x4 supersampling.
+// "nodes" (the two paired machines) joined by a link, the lower-left node
+// drawn as a ring (your home exit node) and the upper-right one solid (this
+// PC). Anti-aliased by 4x4 supersampling.
 func drawIcon(size int) []byte {
 	img := image.NewNRGBA(image.Rect(0, 0, size, size))
 	s := float64(size)
-	a := color.NRGBA{0x4f, 0x46, 0xe5, 0xff}
-	b := color.NRGBA{0x06, 0xb6, 0xd4, 0xff}
+	a := color.NRGBA{0x4f, 0x46, 0xe5, 0xff} // indigo
+	b := color.NRGBA{0x06, 0xb6, 0xd4, 0xff} // cyan
 	radius := s * 0.22
-	cx, cy := s/2, s*0.70
+
+	// Two nodes on a diagonal, joined by a link (traffic going out and up).
+	ax, ay := s*0.32, s*0.68 // home exit node (lower-left)
+	bx, by := s*0.68, s*0.32 // this PC (upper-right)
+	node := s * 0.145        // node radius
+	link := s * 0.052        // half-thickness of the connecting bar
+	// A ring is only legible when its wall is at least ~1px; below that the
+	// small icon draws the home node solid too, so it never turns into a blob.
+	ringWall := s * 0.052
+	ring := ringWall >= 1.1
+
 	inside := func(x, y float64) (bg, fg bool) {
 		// rounded square
 		dx := math.Max(math.Max(radius-x, x-(s-radius)), 0)
@@ -112,11 +136,21 @@ func drawIcon(size int) []byte {
 		if dx*dx+dy*dy > radius*radius {
 			return false, false
 		}
-		d := math.Hypot(x-cx, y-cy)
-		stroke := s * 0.075
-		above := y <= cy
-		arc := func(r float64) bool { return above && math.Abs(d-r) <= stroke/2 }
-		return true, arc(s*0.34) || arc(s*0.19) || d <= s*0.055
+		bg = true
+		// Link first, so it reads as joining the nodes, not crossing them.
+		if distToSegment(x, y, ax, ay, bx, by) <= link {
+			return bg, true
+		}
+		if da := math.Hypot(x-ax, y-ay); da <= node {
+			if ring {
+				return bg, da >= node-ringWall // hollow home node
+			}
+			return bg, true
+		}
+		if math.Hypot(x-bx, y-by) <= node {
+			return bg, true // solid "this PC" node
+		}
+		return bg, false
 	}
 	const ss = 4
 	for py := 0; py < size; py++ {
@@ -148,4 +182,16 @@ func drawIcon(size int) []byte {
 	var buf bytes.Buffer
 	must(png.Encode(&buf, img))
 	return buf.Bytes()
+}
+
+// distToSegment returns the distance from (px,py) to the segment (ax,ay)-(bx,by).
+func distToSegment(px, py, ax, ay, bx, by float64) float64 {
+	dx, dy := bx-ax, by-ay
+	l2 := dx*dx + dy*dy
+	if l2 == 0 {
+		return math.Hypot(px-ax, py-ay)
+	}
+	t := ((px-ax)*dx + (py-ay)*dy) / l2
+	t = math.Max(0, math.Min(1, t))
+	return math.Hypot(px-(ax+t*dx), py-(ay+t*dy))
 }

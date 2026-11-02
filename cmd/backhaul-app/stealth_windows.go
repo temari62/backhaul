@@ -132,7 +132,13 @@ func applyTrayVisibility() {
 	d := trayIconData{wnd: h, id: trayID}
 	d.size = uint32(unsafe.Sizeof(d))
 	if stealth.Load() {
-		procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&d))) // fails harmlessly if already gone
+		// NIM_DELETE removes the icon entirely (Windows 11 ignores the older
+		// "hidden" state). A zero return means the icon was already gone,
+		// which is fine; log the first real failure so a stuck icon can be
+		// diagnosed (e.g. a wrong cbSize or a window/ID mismatch).
+		if r, _, err := procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&d))); r == 0 && !trayRemoved.Load() {
+			slog.Debug("tray icon delete returned false (may already be hidden)", "err", err)
+		}
 		trayRemoved.Store(true)
 		return
 	}

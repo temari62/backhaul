@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"runtime"
@@ -208,6 +209,42 @@ func showWindow(hwnd uintptr) {
 // quitApp ends Backhaul (the network is restored on the way out).
 var quitApp = func() {}
 
+// updateItem holds the tray's "Install update" item once the menu is built,
+// so a background check that finishes earlier or later can reveal it.
+var updateItem atomic.Value // *systray.MenuItem
+
+// notifyUpdateAvailable is called by the background checker when a newer
+// release is found; it reveals the tray item if the menu already exists.
+func notifyUpdateAvailable(version string) { showUpdateItem(version) }
+
+// showUpdateItem reveals and labels the tray "Install update" item.
+func showUpdateItem(version string) {
+	if it, ok := updateItem.Load().(*systray.MenuItem); ok && it != nil {
+		it.SetTitle("Install update " + version)
+		it.SetTooltip("Download and install Backhaul " + version)
+		it.Show()
+		trayRefresh.Store(true) // re-send the tooltip on the next tick
+	}
+}
+
+// runUpdate is the tray click handler: download, verify and launch the
+// installer, then quit. On failure it leaves a note in the menu item.
+func runUpdate() {
+	if it, ok := updateItem.Load().(*systray.MenuItem); ok && it != nil {
+		it.SetTitle("Updating…")
+		it.Disable()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	if err := applyUpdate(ctx); err != nil {
+		slog.Error("update failed", "err", err)
+		if it, ok := updateItem.Load().(*systray.MenuItem); ok && it != nil {
+			it.SetTitle("Update failed — click to retry")
+			it.Enable()
+		}
+	}
+}
+
 func runTray(w webview2.WebView, b *gui.Backend) {
 	hwnd := uintptr(w.Window())
 	quit := func() {
@@ -225,6 +262,12 @@ func runTray(w webview2.WebView, b *gui.Backend) {
 			status.Disable()
 			systray.AddSeparator()
 			open := systray.AddMenuItem("Open Backhaul", "Show the window")
+			upd := systray.AddMenuItem("Install update", "Download and install the newer version")
+			upd.Hide() // shown only once a newer release is found
+			updateItem.Store(upd)
+			if v, _ := pendingUpdate.Load().(string); v != "" {
+				showUpdateItem(v) // a check already finished before the menu existed
+			}
 			exit := systray.AddMenuItem("Quit", "Stop sharing/connecting, restore the network and exit")
 			applyTrayVisibility() // stealth mode: hide it right away
 			go func() {
@@ -232,6 +275,8 @@ func runTray(w webview2.WebView, b *gui.Backend) {
 					select {
 					case <-open.ClickedCh:
 						w.Dispatch(func() { showMain(hwnd) })
+					case <-upd.ClickedCh:
+						go runUpdate()
 					case <-exit.ClickedCh:
 						quit()
 						return
@@ -246,6 +291,16 @@ func runTray(w webview2.WebView, b *gui.Backend) {
 					}
 					if trayRefresh.Swap(false) {
 						last = "" // icon was added back: send picture and tooltip again
+					}
+					if stealth.Load() {
+						// Stealth mode: the icon is deleted, so don't touch it.
+						// systray.SetIcon/SetTooltip issue NIM_MODIFY, which on
+						// Windows 11 re-adds a deleted icon — that was the bug
+						// that kept the icon visible in stealth mode. Re-send
+						// the picture and tooltip once stealth turns back off.
+						last = ""
+						time.Sleep(time.Second)
+						continue
 					}
 					text, phase := trayStatus(b.State())
 					if text != last {
