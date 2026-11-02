@@ -29,11 +29,18 @@ func main() {
 	dir := flag.String("dir", "cmd/backhaul-app", "app directory")
 	arch := flag.String("arch", "amd64", "windows architecture to bundle")
 	iconOnly := flag.Bool("icon-only", false, "only (re)draw the icon; skip the component downloads")
+	size := flag.Int("size", 0, "with -icon-only and -out: render a single PNG at this pixel size")
+	out := flag.String("out", "", "with -icon-only and -size: write the single PNG here (e.g. a .icns master)")
 	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	if *iconOnly {
+		if *out != "" && *size > 0 {
+			must(os.WriteFile(*out, drawIcon(*size), 0o644))
+			log.Printf("icon %dpx written to %s", *size, *out)
+			return
+		}
 		drawIcons(*dir)
 		return
 	}

@@ -289,10 +289,37 @@ port forward.
 
 ## macOS
 
-A Mac can be either end of the tunnel. The GUI app is Windows-only, so on macOS you drive it from
-the terminal with the same commands as Linux. The one-time pairing in **One-time setup** above
-applies unchanged; this section covers only the Mac-specific parts: getting the binary, clearing
-Gatekeeper, and running an always-on exit node under launchd.
+A Mac can be either end of the tunnel, with a GUI app or the command line.
+
+### GUI app (Backhaul.app)
+
+`Backhaul.app` is the macOS counterpart of the Windows app: one window with **Share** and
+**Connect** tabs, built on the same UI and engine. It bundles nothing extra; it downloads the
+pinned wstunnel/Xray on first use, like the CLI.
+
+- **Install:** open `Backhaul-<version>.dmg` and drag **Backhaul** to **Applications**. The build
+  is for Apple Silicon (macOS 13+). The disk image is ad-hoc signed, so the first launch needs a
+  right-click → **Open** to get past Gatekeeper (or notarize it with a Developer ID for a clean
+  launch).
+- **Admin prompt:** sharing or connecting changes routes, DNS and the `pf` firewall, so the app
+  asks for your password once at startup, the way the Windows app asks for UAC.
+- **Build it** (on a Mac, with the Xcode command line tools and Go 1.26+):
+
+  ```sh
+  ./build-app-mac.sh            # → dist/Backhaul.app and dist/Backhaul-<version>.dmg
+  ```
+
+  The app embeds a WKWebView (cgo), so it builds only on macOS. CI builds it too: the `mac-app`
+  job on `macos-latest` produces the `.dmg` as a downloadable artifact.
+
+> Status: the macOS app is new. It is built and verified in CI, but its elevation flow (running the
+> privileged engine) still needs validation on real hardware; report anything that misbehaves.
+
+### Command line
+
+The CLI works on macOS exactly as on Linux. The one-time pairing in **One-time setup** above
+applies unchanged; the rest of this section covers the Mac-specific parts: getting the binary,
+clearing Gatekeeper, and running an always-on exit node under launchd.
 
 **What you need:**
 - macOS 13 (Ventura) or later. The release binary `backhaul_darwin_arm64` is for Apple Silicon

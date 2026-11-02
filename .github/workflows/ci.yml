@@ -94,3 +94,23 @@ jobs:
         env:
           BACKHAUL_WFP_E2E: "1"
         run: go test ./internal/wfp -run TestKillSwitchBlocksAllButPermittedApps -v
+
+  mac-app:
+    # Builds the macOS GUI app (WKWebView via cgo) and its drag-to-install
+    # .dmg, and uploads the image as an artifact. Allowed to fail for now: the
+    # app is new and its on-device elevation model still needs validation on a
+    # Mac, so a build hiccup shouldn't turn the whole pipeline red. Flip off
+    # continue-on-error once it's confirmed working.
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with: { go-version-file: go.mod }
+      - name: build Backhaul.app and .dmg
+        run: bash build-app-mac.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backhaul-macos-dmg
+          path: dist/Backhaul-*.dmg
+          if-no-files-found: error

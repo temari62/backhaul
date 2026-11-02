@@ -29,11 +29,13 @@ import (
 	"backhaul/internal/buildinfo"
 	"backhaul/internal/config"
 	"backhaul/internal/gui"
+	"backhaul/internal/webui"
 	"backhaul/internal/wg"
 )
 
-//go:embed ui/index.html
-var indexHTML string
+// indexHTML is the shared desktop UI (see internal/webui), embedded once and
+// used by both the Windows and macOS apps.
+var indexHTML = webui.IndexHTML
 
 //go:embed bundle/wstunnel.exe
 var wstunnelExe []byte
