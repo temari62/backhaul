@@ -68,6 +68,24 @@ func (b *LogBuffer) WithAttrs(as []slog.Attr) slog.Handler {
 
 func (b *LogBuffer) WithGroup(string) slog.Handler { return b }
 
+// Add appends a line that did not arrive through slog — the macOS app tails
+// its privileged engine's log file into the activity panel with it. The line
+// is mirrored to the log file like any other, so the app's log stays complete.
+func (b *LogBuffer) Add(level, text string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	b.seq++
+	l := LogLine{Seq: b.seq, Time: now.Format("15:04:05"), Level: level, Text: text}
+	b.lines = append(b.lines, l)
+	if len(b.lines) > b.max {
+		b.lines = b.lines[len(b.lines)-b.max:]
+	}
+	if b.file != nil {
+		fmt.Fprintf(b.file, "%s %-5s %s\n", now.Format(time.RFC3339), level, text)
+	}
+}
+
 // After returns lines with Seq > after.
 func (b *LogBuffer) After(after int) []LogLine {
 	b.mu.Lock()

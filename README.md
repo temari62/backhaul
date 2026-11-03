@@ -302,7 +302,10 @@ pinned wstunnel/Xray on first use, like the CLI.
   right-click → **Open** to get past Gatekeeper (or notarize it with a Developer ID for a clean
   launch).
 - **Admin prompt:** sharing or connecting changes routes, DNS and the `pf` firewall, so the app
-  asks for your password once at startup, the way the Windows app asks for UAC.
+  asks for your password when you click **Start sharing** or **Connect**. The window itself runs
+  as you, not as root: macOS doesn't support root GUI apps (a root app can't even see your
+  clipboard), so the privileged work runs in a separate engine process that the app starts with
+  that prompt and stops when you stop sharing, disconnect, or quit.
 - **Build it** (on a Mac, with the Xcode command line tools and Go 1.26+):
 
   ```sh
@@ -312,8 +315,11 @@ pinned wstunnel/Xray on first use, like the CLI.
   The app embeds a WKWebView (cgo), so it builds only on macOS. CI builds it too: the `mac-app`
   job on `macos-latest` produces the `.dmg` as a downloadable artifact.
 
-> Status: the macOS app is new. It is built and verified in CI, but its elevation flow (running the
-> privileged engine) still needs validation on real hardware; report anything that misbehaves.
+> Status: the macOS app is new. It is built and verified in CI, but the split between the window
+> and its privileged engine still needs validation on real hardware; report anything that
+> misbehaves. If you used an earlier build that ran the whole app as root, its exit-node profile
+> lives under root's home (`/var/root/.config/backhaul`); this version uses yours, so set the exit
+> node up again from the **Share** tab.
 
 ### Command line
 

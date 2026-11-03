@@ -5,9 +5,11 @@
 // ("Share") and client ("Connect") built in via internal/gui.Backend. It is
 // the macOS counterpart of cmd/backhaul-app (Windows).
 //
-// Serve/Connect change routes, DNS and the pf firewall, so they need root.
-// The app re-launches itself with administrator rights at startup (one prompt,
-// like the Windows app's UAC), mirroring that model. See README "macOS app".
+// Serve/Connect change routes, DNS and the pf firewall, so they need root —
+// but the GUI itself stays unprivileged (a root GUI is unsupported on macOS
+// and cannot even see the user's pasteboard). The privileged work runs in a
+// separate engine process, started with an administrator prompt on each
+// Start; see engine_darwin.go and README "macOS app".
 package main
 
 import (
@@ -84,7 +86,9 @@ const hideCustomTitlebarCSS = `
 })();`
 
 func main() {
-	ensureRoot() // re-launch with admin rights if needed (serve/connect need root)
+	if isEngineInvocation() {
+		engineMain(os.Args[2:]) // the privileged side; never returns
+	}
 
 	base, err := config.DefaultDir()
 	if err != nil {
@@ -104,16 +108,17 @@ func main() {
 			}
 			return nil
 		},
+		// Serve/Connect run as root in a separate engine process (see
+		// engine_darwin.go); this GUI stays unprivileged.
+		Run: runElevated(logs),
+		// Without this the badge would say "not administrator" for a GUI that
+		// is unprivileged on purpose: rights are obtained per Start instead.
+		IsAdmin: func() bool { return true },
 	}
 
-	// Repair anything a crash left behind before the user starts again.
-	recoverCtx, cancelRecover := context.WithTimeout(context.Background(), app.TeardownTimeout)
-	for _, dir := range backend.ProfileDirs() {
-		if n, err := app.Recover(recoverCtx, config.Paths{Dir: dir}); n > 0 || err != nil {
-			slog.Info("restored network settings left by a previous run", "profile", dir, "steps", n, "err", err)
-		}
-	}
-	cancelRecover()
+	// Anything a crash left behind (routes, DNS, pf) is repaired by the
+	// engine's own pre-flight, as root, the next time it starts; the undo
+	// journal is root-owned, so this process could not read it anyway.
 
 	w := webview.New(os.Getenv("BACKHAUL_APP_DEBUG") != "")
 	defer w.Destroy()
@@ -245,31 +250,6 @@ func (r *rpc) dispatch(method string, a []json.RawMessage) (any, error) {
 		return nil, nil
 	}
 	return nil, fmt.Errorf("unknown method %q", method)
-}
-
-// ensureRoot re-launches the app with administrator rights if it isn't root.
-// Serve/Connect create a utun device and change routes, DNS and pf, all of
-// which need root. This matches the Windows app, which requests admin at
-// startup. Running the GUI as root is the main thing to validate on a Mac.
-func ensureRoot() {
-	if os.Geteuid() == 0 || os.Getenv("BACKHAUL_NO_ELEVATE") != "" {
-		return
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return
-	}
-	// osascript asks for the password once and runs exe as root, detached so
-	// it outlives this (soon-exiting) process.
-	cmd := fmt.Sprintf("%s >/dev/null 2>&1 &", shellQuote(exe))
-	script := fmt.Sprintf("do shell script %s with administrator privileges", asQuote(cmd))
-	if err := exec.Command("osascript", "-e", script).Run(); err != nil {
-		// User cancelled or elevation failed: carry on unprivileged. Setup and
-		// pairing still work; starting will report a clear permission error.
-		slog.Warn("could not get administrator rights; sharing/connecting will fail until granted", "err", err)
-		return
-	}
-	os.Exit(0)
 }
 
 // shellQuote single-quotes s for /bin/sh.

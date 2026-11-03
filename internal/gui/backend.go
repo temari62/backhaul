@@ -47,6 +47,15 @@ type Backend struct {
 	Verbose bool
 	// IPCheckURL overrides the public-IP service (tests).
 	IPCheckURL string
+	// Run, if set, runs a role out of process and blocks until it has
+	// stopped, returning its error. The macOS app uses it to run serve/connect
+	// as root in a separate engine while its GUI stays unprivileged. nil runs
+	// the role in this process.
+	Run func(ctx context.Context, role string, env *app.Env) error
+	// IsAdmin, if set, replaces the "is this process elevated" check behind
+	// the UI's "not administrator" badge (the macOS app gets root per Start,
+	// so its unprivileged GUI is not a problem to flag).
+	IsAdmin func() bool
 
 	mu       sync.Mutex
 	running  string // role currently running ("" = none)
@@ -148,7 +157,11 @@ func (b *Backend) roleView(role string) RoleView {
 
 // State returns the current view.
 func (b *Backend) State() View {
-	v := View{Admin: osutil.IsElevated(), Serve: b.roleView(RoleServe), Connect: b.roleView(RoleConnect), Phase: "idle", Nodes: b.Nodes()}
+	admin := osutil.IsElevated()
+	if b.IsAdmin != nil {
+		admin = b.IsAdmin()
+	}
+	v := View{Admin: admin, Serve: b.roleView(RoleServe), Connect: b.roleView(RoleConnect), Phase: "idle", Nodes: b.Nodes()}
 	b.mu.Lock()
 	v.Running, v.Error = b.running, b.lastErr
 	stopping := b.stopping
@@ -426,9 +439,12 @@ func (b *Backend) Start(role string) error {
 	go func() {
 		defer close(done)
 		var err error
-		if role == RoleServe {
+		switch {
+		case b.Run != nil:
+			err = b.Run(ctx, role, env)
+		case role == RoleServe:
 			err = app.Serve(ctx, env)
-		} else {
+		default:
 			err = app.Connect(ctx, env, cfg.Client.KillSwitch)
 		}
 		b.mu.Lock()
