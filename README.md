@@ -585,7 +585,7 @@ clients' traffic down it.
 - points the hostname's DNS at the tunnel (a proxied CNAME, replacing an earlier A record);
 - stores the tunnel's token.
 
-`serve` downloads the pinned cloudflared (Windows and Linux) the first time and supervises it. The
+`serve` downloads the pinned cloudflared (Windows, Linux and macOS) the first time and supervises it. The
 Share tab and `backhaul status` show whether it's connected and, if not, cloudflared's reason.
 
 ### REALITY and wstunnel

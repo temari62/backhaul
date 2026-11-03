@@ -208,11 +208,14 @@ func EnsureXray(ctx context.Context, cfg *config.Config, binDir string) (string,
 
 // cloudflared (Cloudflare Tunnel exit node). Checksums verified against the
 // downloads and GitHub's recorded digests; the Windows build is signed by
-// Cloudflare, Inc.
+// Cloudflare, Inc. The macOS assets are .tgz archives holding the one
+// binary "cloudflared"; EnsureCloudflared extracts it.
 var cloudflaredAssets = map[string]string{
 	"windows_amd64": "cloudflared-windows-amd64.exe",
 	"linux_amd64":   "cloudflared-linux-amd64",
 	"linux_arm64":   "cloudflared-linux-arm64",
+	"darwin_arm64":  "cloudflared-darwin-arm64.tgz",
+	"darwin_amd64":  "cloudflared-darwin-amd64.tgz",
 }
 
 var cloudflaredSHA256 = map[string]map[string]string{
@@ -220,6 +223,8 @@ var cloudflaredSHA256 = map[string]map[string]string{
 		"windows_amd64": "f096265ec2fcbe9bb6e2d64268db167ced3fcbb83d894bdb9e2fcdb26f2ea7e2",
 		"linux_amd64":   "77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2",
 		"linux_arm64":   "aaeb2d7d0da3614634c7e03ab13487a1522c2e79165ed2929cfe23d5e95b326d",
+		"darwin_arm64":  "587c2cfb1c230fe36c7fa7727da78be459dae028cabe8c001291999350f07095",
+		"darwin_amd64":  "d1155d0837487f261183b15c1eab6c4ebcad9dc49b94675f1524c3564cea3977",
 	},
 }
 
@@ -227,7 +232,7 @@ var cloudflaredSHA256 = map[string]map[string]string{
 func CloudflaredRelease(version, platform string) (url, sha string, err error) {
 	asset, ok := cloudflaredAssets[platform]
 	if !ok {
-		return "", "", fmt.Errorf("Cloudflare Tunnel mode isn't available on %s yet (Windows and Linux are)", platform)
+		return "", "", fmt.Errorf("Cloudflare Tunnel mode isn't available on %s yet", platform)
 	}
 	if sha = cloudflaredSHA256[version][platform]; sha == "" {
 		return "", "", fmt.Errorf("no pinned checksum for cloudflared %s %s", version, platform)
@@ -266,6 +271,11 @@ func EnsureCloudflared(ctx context.Context, cfg *config.Config, binDir string) (
 	bin, err := fetch.Verified(ctx, url, sha)
 	if err != nil {
 		return "", fmt.Errorf("download cloudflared: %w", err)
+	}
+	if filepath.Ext(url) == ".tgz" { // macOS: the archive holds the one binary
+		if bin, err = fetch.FromTarGz(bin, "cloudflared"); err != nil {
+			return "", fmt.Errorf("unpack cloudflared: %w", err)
+		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err

@@ -531,6 +531,7 @@ function render(s) {
   $('srvPid').textContent = s.serve.pairingId || '–';
   const lan = s.serve.lanIp ? ' (its address in your home network: ' + s.serve.lanIp + ')' : '';
   $('srvRouter').textContent = (serving && s.router) ? s.router
+    : s.serve.transport === 'cftunnel' ? 'Cloudflare Tunnel: this PC connects out to Cloudflare, so the router needs no port forwarding.'
     : 'Internet traffic reaches your router first. The router must pass TCP port ' + (s.serve.port || 443) + ' on to this PC' + lan + '. Backhaul asks the router to do this automatically (UPnP).';
   $('srvRouter').className = 'note' + (/carrier-grade|didn.t work|already sends port/.test(s.router || '') && serving ? ' warnbox' : '');
   const sb = $('serveBtn');

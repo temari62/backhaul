@@ -9,6 +9,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"backhaul/internal/config"
+	"backhaul/internal/fetch"
 )
 
 func TestCloudflaredLogLines(t *testing.T) {
@@ -63,4 +66,53 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(p)
+}
+
+// Every platform in the asset table has a pinned checksum for the default
+// version, and exactly the macOS assets are archives (which EnsureCloudflared
+// unpacks).
+func TestCloudflaredReleaseTable(t *testing.T) {
+	for plat, asset := range cloudflaredAssets {
+		url, sha, err := CloudflaredRelease(config.DefaultCloudflaredVersion, plat)
+		if err != nil {
+			t.Fatalf("%s: %v", plat, err)
+		}
+		if !strings.HasSuffix(url, "/"+asset) || len(sha) != 64 {
+			t.Fatalf("%s: url=%s sha=%q", plat, url, sha)
+		}
+		if mac := strings.HasPrefix(plat, "darwin_"); mac != strings.HasSuffix(asset, ".tgz") {
+			t.Fatalf("%s: asset %s — only the macOS assets are .tgz archives", plat, asset)
+		}
+	}
+	if _, _, err := CloudflaredRelease(config.DefaultCloudflaredVersion, "plan9_mips"); err == nil {
+		t.Fatal("an unknown platform should be an error")
+	}
+}
+
+// Opt-in: with BACKHAUL_TEST_CLOUDFLARED_TGZ pointing at a downloaded
+// cloudflared-darwin-*.tgz, the unpack step must yield the whole Mach-O
+// binary (fetch.MaxSize must not truncate it).
+func TestCloudflaredDarwinArchive(t *testing.T) {
+	p := os.Getenv("BACKHAUL_TEST_CLOUDFLARED_TGZ")
+	if p == "" {
+		t.Skip("set BACKHAUL_TEST_CLOUDFLARED_TGZ to a cloudflared-darwin-*.tgz")
+	}
+	archive, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, err := fetch.FromTarGz(archive, "cloudflared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mach-O 64-bit (cf fa ed fe on disk) or a fat/universal binary (ca fe ba be).
+	machO := len(bin) >= 4 && ((bin[0] == 0xcf && bin[1] == 0xfa && bin[2] == 0xed && bin[3] == 0xfe) ||
+		(bin[0] == 0xca && bin[1] == 0xfe && bin[2] == 0xba && bin[3] == 0xbe))
+	if !machO {
+		t.Fatalf("unpacked %d bytes, not a Mach-O binary", len(bin))
+	}
+	if int64(len(bin)) >= fetch.MaxSize {
+		t.Fatalf("unpacked %d bytes, which is fetch.MaxSize: the binary was truncated", len(bin))
+	}
+	t.Logf("unpacked cloudflared: %d bytes", len(bin))
 }
