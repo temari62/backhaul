@@ -42,6 +42,12 @@ type app struct {
 }
 
 func main() {
+	// Better a clear refusal than an icon nobody can see (GNOME without the
+	// AppIndicator extension accepts the icon and shows nothing).
+	if ok, hint := tray.HostAvailable(); !ok {
+		fmt.Fprintln(os.Stderr, "backhaul-tray: "+hint)
+		os.Exit(1)
+	}
 	systray.Run((&app{phase: -1}).onReady, func() {})
 }
 

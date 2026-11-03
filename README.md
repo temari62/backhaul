@@ -422,17 +422,22 @@ the pinned wstunnel/Xray/cloudflared on first use.
   distribution with GTK 3 and WebKitGTK 4.1 (`sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0`;
   Ubuntu desktops have both). Administrator rights come through PolicyKit's `pkexec`, which every
   Ubuntu desktop has.
-- **Install:** take `backhaul-app_linux_amd64`, `backhaul.desktop` and `backhaul.png` from the
-  `linux-app` CI artifact (or build them, below), then
+- **Install:** take `backhaul-app_linux_amd64`, `backhaul-app.desktop` and `backhaul.png` from
+  the `linux-app` CI artifact (or build them, below), then
 
   ```sh
   install -Dm755 backhaul-app_linux_amd64 ~/.local/bin/backhaul-app
   install -Dm644 backhaul.png ~/.local/share/icons/hicolor/256x256/apps/backhaul.png
-  install -Dm644 backhaul.desktop ~/.local/share/applications/backhaul.desktop
+  install -Dm644 backhaul-app.desktop ~/.local/share/applications/backhaul-app.desktop
   ```
 
   (`./build-app-linux.sh --install` does exactly this after building.) **Backhaul** then appears
-  in the app launcher; `~/.local/bin/backhaul-app` runs it from a terminal.
+  in the app launcher with its icon; `~/.local/bin/backhaul-app` runs it from a terminal.
+- **Tray:** the app puts its icon in the tray with a status dot, like on Windows, and closing the
+  window keeps it running there (**Open Backhaul** / **Quit** in its menu). GNOME shows trays only
+  through the AppIndicator extension, which Ubuntu's own session has enabled; where there is no
+  tray (`gnome-extensions enable ubuntu-appindicators@ubuntu.com` turns it on), the app detects
+  that and the close button quits instead, so it is never running out of reach.
 - **Admin prompt:** sharing or connecting changes routes, DNS and nftables, so the app asks for
   your password (the PolicyKit dialog) when you click **Start sharing** or **Connect**. The window
   itself runs as you, not as root: the privileged work runs in a separate engine process that the
@@ -478,7 +483,7 @@ Secrets are never logged.
 
 ### Tray app
 
-`backhaul-tray` puts a status dot in the system tray:
+`backhaul-tray` puts the Backhaul icon in the system tray, with a status dot in its corner:
 
 | Dot | Meaning |
 |---|---|
@@ -832,7 +837,8 @@ cmd/backhaul-app-mac, cmd/backhaul-app-linux
 internal/gui        the desktop apps' backend (Share/Connect state, setup, nodes, activity log)
 internal/webui      the one HTML page all three desktop apps show
 internal/engine     the macOS/Linux apps' root "engine" process and its launcher/follower
-internal/tray       tray status model, generated icons, per-OS elevated launchers
+internal/tray       tray status model, per-OS elevated launchers
+internal/logo       the one rendered Backhaul icon (exe/.icns/launcher icons, tray icons with a status dot)
 internal/app        serve/connect orchestration, setup logic, teardown
 internal/config     TOML config + secrets (0600), defaults, validation
 internal/keys       WireGuard keypair / PSK generation (wgctrl)

@@ -302,7 +302,7 @@ func runTray(w webview2.WebView, b *gui.Backend) {
 						time.Sleep(time.Second)
 						continue
 					}
-					text, phase := trayStatus(b.State())
+					text, phase := gui.TrayStatus(b.State())
 					if text != last {
 						systray.SetIcon(tray.Icon(phase))
 						systray.SetTooltip(text)
@@ -314,30 +314,4 @@ func runTray(w webview2.WebView, b *gui.Backend) {
 			}()
 		}, nil)
 	}()
-}
-
-func trayStatus(v gui.View) (string, tray.Phase) {
-	role := "Connect"
-	if v.Running == gui.RoleServe {
-		role = "Sharing"
-	}
-	switch v.Phase {
-	case "up":
-		if v.Running == gui.RoleServe {
-			return "Backhaul: sharing — other PC connected", tray.Up
-		}
-		return "Backhaul: connected", tray.Up
-	case "waiting":
-		return "Backhaul: sharing — waiting for the other PC", tray.Up
-	case "starting":
-		return "Backhaul: " + map[string]string{"Sharing": "starting to share…", "Connect": "connecting…"}[role], tray.Starting
-	case "reconnecting":
-		return "Backhaul: reconnecting…", tray.Starting
-	case "stopping":
-		return "Backhaul: stopping…", tray.Starting
-	}
-	if v.Error != "" {
-		return "Backhaul: stopped (error)", tray.Failed
-	}
-	return "Backhaul: not running", tray.Down
 }

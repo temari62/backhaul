@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the Linux desktop app:
 #   dist/backhaul-app_linux_<arch>   the app (WebKitGTK UI via cgo)
-#   dist/backhaul.desktop            launcher entry
+#   dist/backhaul-app.desktop        launcher entry
 #   dist/backhaul.png                its icon
 #
 #   ./build-app-linux.sh             # version from the VERSION file
@@ -67,7 +67,10 @@ echo "3/3  Writing the launcher entry..."
 # Exec is the installed path: --install's, or the system-wide one otherwise.
 EXEC="/usr/local/bin/backhaul-app"
 [ "$INSTALL" = 1 ] && EXEC="$HOME/.local/bin/backhaul-app"
-cat > dist/backhaul.desktop <<DESKTOP
+# The file is named after the app id the window reports (backhaul-app, set in
+# gtk_linux.go), and says so again in StartupWMClass: that is how GNOME pairs
+# the running window with this entry's icon and name in the dock.
+cat > dist/backhaul-app.desktop <<DESKTOP
 [Desktop Entry]
 Type=Application
 Version=1.0
@@ -78,13 +81,15 @@ Icon=backhaul
 Terminal=false
 Categories=Network;
 Keywords=VPN;tunnel;exit node;
+StartupWMClass=backhaul-app
 DESKTOP
 
 if [ "$INSTALL" = 1 ]; then
   echo "Installing for $USER..."
   install -Dm755 "$BIN" "$HOME/.local/bin/backhaul-app"
   install -Dm644 dist/backhaul.png "$HOME/.local/share/icons/hicolor/256x256/apps/backhaul.png"
-  install -Dm644 dist/backhaul.desktop "$HOME/.local/share/applications/backhaul.desktop"
+  install -Dm644 dist/backhaul-app.desktop "$HOME/.local/share/applications/backhaul-app.desktop"
+  rm -f "$HOME/.local/share/applications/backhaul.desktop" # the entry's earlier name
   command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
   echo "  Backhaul is in your app launcher; or run $HOME/.local/bin/backhaul-app"
 fi
@@ -92,5 +97,5 @@ fi
 echo ""
 echo "Done:"
 echo "  $BIN ($(du -h "$BIN" | cut -f1))"
-echo "  dist/backhaul.desktop, dist/backhaul.png"
+echo "  dist/backhaul-app.desktop, dist/backhaul.png"
 sha256sum "$BIN" | sed 's#dist/##'

@@ -3,6 +3,7 @@ package tray
 import (
 	"bytes"
 	"encoding/binary"
+	"image/color"
 	"image/png"
 	"strings"
 	"testing"
@@ -49,8 +50,8 @@ func TestCompute(t *testing.T) {
 }
 
 func TestIcons(t *testing.T) {
-	for p := range phaseColors {
-		img, err := png.Decode(bytes.NewReader(DotPNG(p)))
+	for p, want := range phaseColors {
+		img, err := png.Decode(bytes.NewReader(PNG(p)))
 		if err != nil || img.Bounds().Dx() != iconSize {
 			t.Fatalf("phase %d: %v", p, err)
 		}
@@ -59,8 +60,12 @@ func TestIcons(t *testing.T) {
 		if a != 0 || ac == 0 {
 			t.Fatalf("phase %d: corner should be transparent, centre opaque", p)
 		}
+		// The status dot (lower-right) carries the phase colour exactly.
+		if got := color.NRGBAModel.Convert(img.At(iconSize*76/100, iconSize*76/100)).(color.NRGBA); got != want {
+			t.Fatalf("phase %d: badge pixel %v, want %v", p, got, want)
+		}
 	}
-	ico := ICO(DotPNG(Up))
+	ico := ICO(PNG(Up))
 	if binary.LittleEndian.Uint16(ico[2:]) != 1 || binary.LittleEndian.Uint32(ico[18:]) != 22 || !bytes.Equal(ico[22:26], []byte("\x89PNG")) {
 		t.Fatal("bad ICO container")
 	}

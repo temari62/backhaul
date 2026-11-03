@@ -36,6 +36,8 @@ import (
 	"backhaul/internal/config"
 	"backhaul/internal/engine"
 	"backhaul/internal/gui"
+	"backhaul/internal/logo"
+	"backhaul/internal/tray"
 	"backhaul/internal/update"
 	"backhaul/internal/webui"
 )
@@ -93,6 +95,7 @@ func main() {
 	if engine.IsInvocation() {
 		engine.Main(os.Args[2:]) // the privileged side; never returns
 	}
+	setProgramName() // before GTK starts: it is the app id the dock matches
 
 	base, err := config.DefaultDir()
 	if err != nil {
@@ -127,6 +130,7 @@ func main() {
 	w := webview.New(os.Getenv("BACKHAUL_APP_DEBUG") != "")
 	defer w.Destroy()
 	w.SetTitle(windowTitle)
+	setWindowIcon(w.Window(), logo.Draw(256, nil))
 	w.SetSize(560, 600, webview.HintNone)
 	w.SetSize(440, 420, webview.HintMin)
 
@@ -138,6 +142,16 @@ func main() {
 	w.Init(hideCustomTitlebarCSS)
 	w.Init(updateBannerJS)
 	w.SetHtml(webui.IndexHTML)
+	// A tray icon, when this desktop can show one (GNOME needs the
+	// AppIndicator extension; Ubuntu's session has it): closing the window
+	// then keeps Backhaul running in the tray, as on Windows. Without one the
+	// close button quits, so the app can never be running yet unreachable.
+	if ok, hint := tray.HostAvailable(); ok {
+		hideOnClose(w.Window())
+		runTray(w, backend)
+	} else {
+		slog.Info("no system tray on this desktop; closing the window quits", "detail", hint)
+	}
 	slog.Info("Backhaul started", "config", base, "version", buildinfo.Version)
 	w.Run()
 

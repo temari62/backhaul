@@ -138,6 +138,6 @@ jobs:
           name: backhaul-linux-app
           path: |
             dist/backhaul-app_linux_*
-            dist/backhaul.desktop
+            dist/backhaul-app.desktop
             dist/backhaul.png
           if-no-files-found: error
