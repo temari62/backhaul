@@ -132,12 +132,16 @@ func (c *Cloudflare) call(ctx context.Context, method, path string, body any, ou
 		return redact(err, c.o.Token)
 	}
 	defer resp.Body.Close()
+	// Name the request in errors (path without its query), so a failure says
+	// which call Cloudflare refused: a zone lookup and a tunnel call need
+	// different permissions, and Cloudflare's "Invalid access token" covers both.
+	where, _, _ := strings.Cut(path, "?")
 	var r cfResp
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&r); err != nil {
-		return fmt.Errorf("cloudflare: %s: %w", resp.Status, err)
+		return fmt.Errorf("cloudflare: %s %s: %s: %w", method, where, resp.Status, err)
 	}
 	if !r.Success {
-		return fmt.Errorf("cloudflare: %s: %s", resp.Status, joinRaw(r.Errors))
+		return fmt.Errorf("cloudflare: %s %s: %s: %s", method, where, resp.Status, joinRaw(r.Errors))
 	}
 	if out != nil {
 		return json.Unmarshal(r.Result, out)

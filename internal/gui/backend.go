@@ -5,7 +5,9 @@ package gui
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -253,6 +255,26 @@ func cleanCloudflareToken(tok string) (string, error) {
 	return b.String(), nil
 }
 
+// tokenHint turns Cloudflare's opaque "Invalid access token" (code 9109) into
+// a verdict: it asks Cloudflare's token self-check about the very string that
+// was sent, and adds a fingerprint (length plus 8 hex chars of its SHA-256,
+// not reversible) so the user can compare what this PC sent with what works
+// elsewhere. No token length is assumed: it varies by token kind.
+func tokenHint(err error, token string) error {
+	if !strings.Contains(err.Error(), "9109") && !strings.Contains(err.Error(), "Invalid access token") {
+		return err
+	}
+	sum := sha256.Sum256([]byte(token))
+	fp := fmt.Sprintf("%d characters, fingerprint %s", len(token), hex.EncodeToString(sum[:4]))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	status, verr := ddns.CloudflareVerifyToken(ctx, &http.Client{Timeout: 15 * time.Second}, token)
+	if verr == nil {
+		return fmt.Errorf("%w — yet Cloudflare's own token check says this token is %s (%s). The token is fine; what it may access is not. It must cover this hostname's zone (Zone Resources) and, for Cloudflare Tunnel, the account that owns it (Account Resources, with Account·Cloudflare Tunnel·Edit)", err, status, fp)
+	}
+	return fmt.Errorf("%w — Cloudflare's own token check rejects it as well (%s). Sent: %s. Run the setup where the token works and compare the fingerprint it reports", err, strings.TrimPrefix(verr.Error(), "cloudflare: "), fp)
+}
+
 // SetupServe creates (or replaces) the exit-node profile.
 func (b *Backend) SetupServe(endpoint string, port int, transportKind, cloudflareToken string) (Pairing, error) {
 	if transportKind == "" {
@@ -290,7 +312,7 @@ func (b *Backend) SetupServe(endpoint string, port int, transportKind, cloudflar
 		}
 		tr, err := app.PrepareCloudflareTunnel(context.Background(), token, endpoint, config.DefaultCFTunnelLocalPort)
 		if err != nil {
-			return Pairing{}, fmt.Errorf("Cloudflare Tunnel: %w", err)
+			return Pairing{}, fmt.Errorf("Cloudflare Tunnel: %w", tokenHint(err, token))
 		}
 		opts.CloudflareZoneID, opts.CloudflareTunnelID, opts.CloudflareTunnelToken = tr.ZoneID, tr.TunnelID, tr.TunnelToken
 	} else if transportKind == config.TransportCloudflare {
@@ -313,7 +335,7 @@ func (b *Backend) SetupServe(endpoint string, port int, transportKind, cloudflar
 		}
 		cf, err := app.PrepareCloudflare(context.Background(), token, endpoint, ipURL)
 		if err != nil {
-			return Pairing{}, fmt.Errorf("Cloudflare: %w", err)
+			return Pairing{}, fmt.Errorf("Cloudflare: %w", tokenHint(err, token))
 		}
 		opts.CloudflareZoneID, opts.CloudflareToken = cf.ZoneID, token
 	}
