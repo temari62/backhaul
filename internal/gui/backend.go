@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"rsc.io/qr"
 
@@ -218,6 +219,27 @@ type Pairing struct {
 	QR   string `json:"qr"` // data: URL (PNG)
 }
 
+// cleanCloudflareToken drops whitespace a copy, paste or on-screen keyboard may
+// have slipped into the token (a Cloudflare API token has none) and rejects any
+// non-ASCII character — e.g. a "smart quote" or dash that macOS text
+// substitution puts in — with a message that says what to fix. Sent verbatim as
+// the Bearer credential, such a stray character would otherwise come back from
+// Cloudflare only as the opaque "Invalid access token".
+func cleanCloudflareToken(tok string) (string, error) {
+	var b strings.Builder
+	for _, r := range tok {
+		switch {
+		case unicode.IsSpace(r):
+			continue
+		case r < 0x20 || r > 0x7e:
+			return "", fmt.Errorf("the API token has an unexpected character (%q) — retype it, or turn off smart quotes/text substitution and paste it again", r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String(), nil
+}
+
 // SetupServe creates (or replaces) the exit-node profile.
 func (b *Backend) SetupServe(endpoint string, port int, transportKind, cloudflareToken string) (Pairing, error) {
 	if transportKind == "" {
@@ -243,7 +265,10 @@ func (b *Backend) SetupServe(endpoint string, port int, transportKind, cloudflar
 		if _, err := netip.ParseAddr(endpoint); err == nil || !strings.Contains(endpoint, ".") {
 			return Pairing{}, errors.New("enter the hostname you want on Cloudflare, e.g. home.yourdomain.com")
 		}
-		token := strings.TrimSpace(cloudflareToken)
+		token, err := cleanCloudflareToken(cloudflareToken)
+		if err != nil {
+			return Pairing{}, err
+		}
 		if token == "" {
 			return Pairing{}, errors.New("paste your Cloudflare API token (see the steps in the help)")
 		}
@@ -262,7 +287,10 @@ func (b *Backend) SetupServe(endpoint string, port int, transportKind, cloudflar
 		if !config.CloudflarePorts[port] {
 			return Pairing{}, errors.New("Cloudflare only forwards ports 443, 2053, 2083, 2087, 2096 and 8443 — use 443")
 		}
-		token := strings.TrimSpace(cloudflareToken)
+		token, err := cleanCloudflareToken(cloudflareToken)
+		if err != nil {
+			return Pairing{}, err
+		}
 		if token == "" {
 			return Pairing{}, errors.New("paste your Cloudflare API token (see the steps in the help)")
 		}

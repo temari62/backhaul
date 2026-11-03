@@ -129,6 +129,10 @@ func main() {
 	w.Init(hideCustomTitlebarCSS)
 	w.Init(updateBannerJS)
 	w.SetHtml(webui.IndexHTML)
+	// Install the menu bar (⌘X/⌘C/⌘V/⌘A) so paste works in the text fields.
+	// Dispatch runs it on the main thread once the run loop starts, after the
+	// webview's own setup, so our Edit menu is the one that sticks.
+	w.Dispatch(installEditMenu)
 	slog.Info("Backhaul started", "config", base, "version", buildinfo.Version)
 	w.Run()
 

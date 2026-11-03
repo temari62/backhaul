@@ -276,7 +276,10 @@ dialog.help { max-width: 540px; }
         </div>
       </label>
       <label class="field" id="cfTokenBox" hidden>Cloudflare API token
-        <input id="cfToken" type="password" placeholder="Paste the token" spellcheck="false" autocomplete="off">
+        <div class="row">
+          <input id="cfToken" type="password" placeholder="Paste the token" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
+          <button type="button" class="secondary" id="cfReveal" onclick="toggleToken()" title="Show or hide the token">Show</button>
+        </div>
         <span class="note">Cloudflare → My Profile → API Tokens → Create Token → Custom: <b>Zone·Zone·Read</b>, <b>Zone·DNS·Edit</b>,
           <b>Zone·Zone Settings·Edit</b> for your domain<span id="cfTunnelPerm">, plus <b>Account·Cloudflare Tunnel·Edit</b></span>.</span>
       </label>
@@ -598,6 +601,10 @@ function renderNodes(s) {
   $('cancelAddBtn').hidden = !s.nodes.length;
 }
 function cancelAdd() { $('pairCode').value = ''; $('nodeName').value = ''; $('addBox').hidden = true; }
+function toggleToken() {
+  const i = $('cfToken'), b = $('cfReveal'), show = i.type === 'password';
+  i.type = show ? 'text' : 'password'; b.textContent = show ? 'Hide' : 'Show';
+}
 function openSettings() { loadAuto(); loadStealth(); $('settingsDlg').showModal(); }
 function openHelp() { $('helpDlg').showModal(); }
 function copyCode(btn) {
