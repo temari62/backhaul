@@ -69,14 +69,16 @@ const updateBannerJS = `
   }, 1500));
 })();`
 
-// hideCustomTitlebarCSS hides the page's own window chrome. The shared UI
-// draws a custom title bar with minimize/close buttons for the frameless
-// Windows window; on macOS the native title bar is kept instead, so the
-// page's bar is hidden to avoid doubling up.
+// hideCustomTitlebarCSS hides only the page's own minimize/close buttons. The
+// shared UI's header doubles as a custom title bar for the frameless Windows
+// window; on macOS the native title bar and traffic-light buttons are kept, so
+// just those two buttons are hidden to avoid doubling up (they are no-ops on
+// macOS anyway). The Connect/Share tabs and the Help/Settings buttons — all
+// inside the same header — must stay visible, so the header itself is NOT
+// hidden.
 const hideCustomTitlebarCSS = `
 (() => {
-  const css = '#titlebar,.titlebar,.window-controls,[data-drag],.app-titlebar{display:none !important;}' +
-    'body{padding-top:0 !important;}';
+  const css = '.winbtn.close,.winbtn[onclick*="minimize"]{display:none !important;}';
   const add = () => { const s = document.createElement('style'); s.textContent = css; document.head.appendChild(s); };
   if (document.head) add(); else window.addEventListener('DOMContentLoaded', add);
 })();`

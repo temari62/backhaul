@@ -46,9 +46,10 @@ jobs:
     # The end-to-end tests drive real wstunnel, Xray/REALITY and cloudflared
     # over the runner's network. REALITY's handshake fetches a real site's
     # certificate and cloudflared must start within a deadline, so these flake
-    # on shared runners without indicating a product bug. Kept visible but
-    # non-blocking; the deterministic suite is the `unit` job.
-    continue-on-error: true
+    # on shared runners without indicating a product bug. The two test steps
+    # below are continue-on-error, so a flake doesn't fail the job (it stays
+    # green) while still running and logging; the fetch/setup steps stay hard,
+    # so a real infrastructure problem still turns the job red.
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -71,26 +72,28 @@ jobs:
           echo "77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2  /tmp/cloudflared" | sha256sum -c
           chmod +x /tmp/cloudflared
       - name: unprivileged end-to-end (userspace exit node; wstunnel, REALITY, Cloudflare Tunnel)
+        continue-on-error: true # flaky on shared runners; see job comment
         run: |
           BACKHAUL_E2E=1 BACKHAUL_TEST_WSTUNNEL=/tmp/wstunnel BACKHAUL_TEST_XRAY=/tmp/xray \
           BACKHAUL_TEST_CLOUDFLARED=/tmp/cloudflared BACKHAUL_TEST_REALITY_E2E=1 \
             go test ./internal/app ./internal/transport ./internal/doctor ./internal/keys -run 'E2E|EndToEnd|Reality|Camouflage|Cloudflared' -v
-      - run: sudo -E env "PATH=$PATH" WSTUNNEL=/tmp/wstunnel bash test/integration/netns.sh
+      - name: namespaced end-to-end (sudo netns)
+        continue-on-error: true # flaky on shared runners; see job comment
+        run: sudo -E env "PATH=$PATH" WSTUNNEL=/tmp/wstunnel bash test/integration/netns.sh
 
   wfp:
     # The Windows Filtering Platform kill-switch test applies real WFP rules
     # and is sensitive to the host's network stack; GitHub's windows-latest
-    # lets the blocked probe out even with the filters applied. Run here with
-    # the opt-in flag so the coverage stays visible, but allow it to fail so a
-    # runner-specific WFP quirk doesn't turn the whole pipeline red. It is
-    # skipped by the `unit` job's `go test ./...`.
+    # lets the blocked probe out even with the filters applied. The test step
+    # is continue-on-error, so it runs and logs its result without turning the
+    # job red; it is skipped by the `unit` job's `go test ./...`.
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with: { go-version-file: go.mod }
       - name: WFP kill-switch (opt-in; may flake on shared runners)
+        continue-on-error: true # runner-specific WFP quirk; see job comment
         env:
           BACKHAUL_WFP_E2E: "1"
         run: go test ./internal/wfp -run TestKillSwitchBlocksAllButPermittedApps -v
