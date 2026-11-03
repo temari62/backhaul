@@ -412,6 +412,54 @@ follows the daemon's log.
 
 ---
 
+## Linux desktop app (Ubuntu)
+
+`backhaul-app` is the Linux counterpart of the Windows and macOS apps: the same window with
+**Share** and **Connect** tabs, on the same UI and engine, as one binary. Like the CLI it downloads
+the pinned wstunnel/Xray/cloudflared on first use.
+
+- **What you need:** a desktop session (GNOME, KDE, …) on Ubuntu 22.04 or later, or any
+  distribution with GTK 3 and WebKitGTK 4.1 (`sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0`;
+  Ubuntu desktops have both). Administrator rights come through PolicyKit's `pkexec`, which every
+  Ubuntu desktop has.
+- **Install:** take `backhaul-app_linux_amd64`, `backhaul.desktop` and `backhaul.png` from the
+  `linux-app` CI artifact (or build them, below), then
+
+  ```sh
+  install -Dm755 backhaul-app_linux_amd64 ~/.local/bin/backhaul-app
+  install -Dm644 backhaul.png ~/.local/share/icons/hicolor/256x256/apps/backhaul.png
+  install -Dm644 backhaul.desktop ~/.local/share/applications/backhaul.desktop
+  ```
+
+  (`./build-app-linux.sh --install` does exactly this after building.) **Backhaul** then appears
+  in the app launcher; `~/.local/bin/backhaul-app` runs it from a terminal.
+- **Admin prompt:** sharing or connecting changes routes, DNS and nftables, so the app asks for
+  your password (the PolicyKit dialog) when you click **Start sharing** or **Connect**. The window
+  itself runs as you, not as root: the privileged work runs in a separate engine process that the
+  app starts with that prompt and stops when you stop sharing, disconnect, or quit. Launched with
+  `sudo` it runs the engine in-process instead, with no prompt — but a root window can't open on a
+  Wayland desktop, so prefer the normal launch.
+- **Build it** (on Linux, with Go 1.26+ and the GTK/WebKitGTK headers):
+
+  ```sh
+  sudo apt install build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+  ./build-app-linux.sh            # → dist/backhaul-app_linux_<arch>, backhaul.desktop, backhaul.png
+  ./build-app-linux.sh --install  # …and install for the current user
+  ```
+
+  The app embeds WebKitGTK (cgo) behind the `gtk` build tag, so a plain `go build ./...` needs no
+  GTK headers (it builds a stub that says so). CI builds the real thing: the `linux-app` job on
+  `ubuntu-24.04` uploads the three files as an artifact.
+- **Blank window?** Some VMs and GPU drivers trip WebKitGTK's DMA-BUF renderer. Run it as
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1 backhaul-app` (to make it stick, change the `.desktop` file's
+  line to `Exec=env WEBKIT_DISABLE_DMABUF_RENDERER=1 /path/to/backhaul-app`).
+
+> Status: the Linux app is new. It shares the window/engine split with the macOS app
+> (`internal/engine`) and is built in CI, but still needs validation on a real desktop; report
+> anything that misbehaves.
+
+---
+
 ## Commands
 
 | Command | What it does |
@@ -778,6 +826,12 @@ Other notes:
 ```
 cmd/backhaul        CLI (cobra): setup, pairing, serve, connect, disconnect, status, keys, doctor
 cmd/backhaul-tray   system-tray GUI (status dot, Connect/Disconnect)
+cmd/backhaul-app    all-in-one Windows desktop app (WebView2 UI, bundled components)
+cmd/backhaul-app-mac, cmd/backhaul-app-linux
+                    the same app for macOS (WKWebView) and Linux (WebKitGTK)
+internal/gui        the desktop apps' backend (Share/Connect state, setup, nodes, activity log)
+internal/webui      the one HTML page all three desktop apps show
+internal/engine     the macOS/Linux apps' root "engine" process and its launcher/follower
 internal/tray       tray status model, generated icons, per-OS elevated launchers
 internal/app        serve/connect orchestration, setup logic, teardown
 internal/config     TOML config + secrets (0600), defaults, validation

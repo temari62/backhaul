@@ -9,7 +9,7 @@
 // but the GUI itself stays unprivileged (a root GUI is unsupported on macOS
 // and cannot even see the user's pasteboard). The privileged work runs in a
 // separate engine process, started with an administrator prompt on each
-// Start; see engine_darwin.go and README "macOS app".
+// Start; see internal/engine, elevate_darwin.go and README "macOS app".
 package main
 
 import (
@@ -21,7 +21,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	webview "github.com/webview/webview_go"
@@ -29,6 +28,7 @@ import (
 	"backhaul/internal/app"
 	"backhaul/internal/buildinfo"
 	"backhaul/internal/config"
+	"backhaul/internal/engine"
 	"backhaul/internal/gui"
 	"backhaul/internal/update"
 	"backhaul/internal/webui"
@@ -86,8 +86,8 @@ const hideCustomTitlebarCSS = `
 })();`
 
 func main() {
-	if isEngineInvocation() {
-		engineMain(os.Args[2:]) // the privileged side; never returns
+	if engine.IsInvocation() {
+		engine.Main(os.Args[2:]) // the privileged side; never returns
 	}
 
 	base, err := config.DefaultDir()
@@ -109,8 +109,8 @@ func main() {
 			return nil
 		},
 		// Serve/Connect run as root in a separate engine process (see
-		// engine_darwin.go); this GUI stays unprivileged.
-		Run: runElevated(logs),
+		// internal/engine); this GUI stays unprivileged.
+		Run: engine.Run(logs, launchViaOsascript),
 		// Without this the badge would say "not administrator" for a GUI that
 		// is unprivileged on purpose: rights are obtained per Start instead.
 		IsAdmin: func() bool { return true },
@@ -250,14 +250,6 @@ func (r *rpc) dispatch(method string, a []json.RawMessage) (any, error) {
 		return nil, nil
 	}
 	return nil, fmt.Errorf("unknown method %q", method)
-}
-
-// shellQuote single-quotes s for /bin/sh.
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-
-// asQuote double-quotes s for an AppleScript string literal.
-func asQuote(s string) string {
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
 // appDataDir is ~/Library/Application Support/Backhaul.

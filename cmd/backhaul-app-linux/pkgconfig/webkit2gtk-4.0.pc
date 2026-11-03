@@ -1,0 +1,9 @@
+# Not a real webkit2gtk-4.0. webview_go asks pkg-config for webkit2gtk-4.0,
+# which Ubuntu 24.04 and later no longer ship: only the libsoup3 build,
+# webkit2gtk-4.1, remains — same headers, same API. build-app-linux.sh puts
+# this directory on PKG_CONFIG_PATH when 4.1 is installed, so that request
+# resolves to 4.1 (all flags come from the real webkit2gtk-4.1.pc).
+Name: webkit2gtk-4.0 (shim for webkit2gtk-4.1)
+Description: Redirects webview_go's webkit2gtk-4.0 request to webkit2gtk-4.1
+Version: 4.1
+Requires: webkit2gtk-4.1
