@@ -32,6 +32,11 @@ if [ "$(uname -s)" != "Linux" ]; then
   echo "build-app-linux.sh must run on Linux (needs cgo WebKitGTK)." >&2
   exit 1
 fi
+if ! command -v go >/dev/null; then
+  echo "go not found. Ubuntu's apt Go is too old for this repo (needs 1.26+); install from https://go.dev/dl/:" >&2
+  echo "  sudo tar -C /usr/local -xzf go1.26.1.linux-amd64.tar.gz && export PATH=\$PATH:/usr/local/go/bin" >&2
+  exit 1
+fi
 if ! command -v pkg-config >/dev/null || ! pkg-config --exists gtk+-3.0; then
   echo "GTK headers missing: sudo apt install build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev" >&2
   exit 1

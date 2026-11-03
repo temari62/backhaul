@@ -1,0 +1,5 @@
+# Shell scripts and pkg-config files are read on Linux/macOS, where a CRLF
+# line ending breaks them (bash: "$'\r': command not found"; pkg-config: a
+# package name with a trailing CR). Keep them LF whatever the checkout OS.
+*.sh text eol=lf
+*.pc text eol=lf
